@@ -32,10 +32,20 @@ def get_schedule():
     return df
     return pd.DataFrame(r.json())
 
+# Abbreviation fix
+TEAM_ABBREVIATION_FIX = {
+    'NAS': 'NSH', 'VEG': 'VGK', 'PHO': 'ARI', 'TAM': 'TB', 'LA': 'LAK', 'NJ': 'NJD',
+    'SJ': 'SJS', 'CLS': 'CBJ', 'MON': 'MTL', 'CHI': 'CHI', 'STL': 'STL', 'COL': 'COL',
+    'NYI': 'NYI', 'NYR': 'NYR', 'PIT': 'PIT', 'FLA': 'FLA', 'BUF': 'BUF', 'BOS': 'BOS',
+    'CGY': 'CGY', 'CAR': 'CAR', 'EDM': 'EDM', 'VAN': 'VAN', 'WSH': 'WSH', 'SEA': 'SEA',
+    'OTT': 'OTT', 'DET': 'DET', 'DAL': 'DAL', 'WPG': 'WPG', 'TOR': 'TOR', 'MIN': 'MIN'
+}
+
 # Get player stats
 def get_player_stats_by_team(team):
+    team_fixed = TEAM_ABBREVIATION_FIX.get(team, team)
     time.sleep(0.5)  # gentle rate limiting
-    url = f"https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsByTeam/2024/{team}"
+    url = f"https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsByTeam/2024/{team_fixed}"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
     r = requests.get(url, headers=headers)
     if r.status_code != 200:
