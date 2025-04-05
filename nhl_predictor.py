@@ -48,8 +48,22 @@ def get_injuries():
 # Aggregate stats for training
 def aggregate_team_stats(team, injury_df):
     df = get_player_stats_by_team(team)
-    if df.empty or 'Team' not in df.columns:
+    required_columns = {'Name', 'Team', 'Goals', 'ShotsOnGoal', 'Points'}
+    if df.empty or not required_columns.issubset(df.columns):
+        st.warning(f"⚠️ Could not fetch complete player stats for {team}.")
         return {"goals_avg": 0, "shots_avg": 0, "points_avg": 0, "top_scorers": [], "scratched": []}
+
+    injured_players = injury_df[injury_df['Team'] == team]['Name'].tolist()
+    scratched = df[df['Name'].isin(injured_players)][['Name', 'Position']].to_dict('records')
+    df_active = df[~df['Name'].isin(injured_players)]
+    top_scorers = df_active.sort_values('Points', ascending=False).head(3)[['Name', 'Points']].to_dict('records')
+    return {
+        "goals_avg": df_active['Goals'].mean(),
+        "shots_avg": df_active['ShotsOnGoal'].mean(),
+        "points_avg": df_active['Points'].mean(),
+        "top_scorers": top_scorers,
+        "scratched": scratched
+    }
     injured_players = injury_df[injury_df['Team'] == team]['Name'].tolist()
     scratched = df[df['Name'].isin(injured_players)][['Name', 'Position']].to_dict('records')
     df_active = df[~df['Name'].isin(injured_players)]
@@ -155,7 +169,6 @@ else:
 if st.checkbox("Show full season schedule data"):
     df = get_full_season_schedule()
     st.dataframe(df)
-
 
 
 
