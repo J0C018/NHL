@@ -4,6 +4,7 @@ import datetime
 import requests
 import joblib
 from sklearn.ensemble import RandomForestClassifier
+import time
 
 # Load API key
 SPORTSDATA_API_KEY = st.secrets["SPORTSDATA_API_KEY"]
@@ -25,10 +26,15 @@ def get_schedule():
     r = requests.get(url, headers=headers)
     if r.status_code != 200:
         return pd.DataFrame()
+    df = pd.DataFrame(r.json())
+    if 'Status' in df.columns:
+        df = df[df['Status'] != 'Final']  # remove already finished games
+    return df
     return pd.DataFrame(r.json())
 
 # Get player stats
 def get_player_stats_by_team(team):
+    time.sleep(0.5)  # gentle rate limiting
     url = f"https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsByTeam/2024/{team}"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
     r = requests.get(url, headers=headers)
@@ -53,17 +59,6 @@ def aggregate_team_stats(team, injury_df):
         st.warning(f"⚠️ Could not fetch complete player stats for {team}.")
         return {"goals_avg": 0, "shots_avg": 0, "points_avg": 0, "top_scorers": [], "scratched": []}
 
-    injured_players = injury_df[injury_df['Team'] == team]['Name'].tolist()
-    scratched = df[df['Name'].isin(injured_players)][['Name', 'Position']].to_dict('records')
-    df_active = df[~df['Name'].isin(injured_players)]
-    top_scorers = df_active.sort_values('Points', ascending=False).head(3)[['Name', 'Points']].to_dict('records')
-    return {
-        "goals_avg": df_active['Goals'].mean(),
-        "shots_avg": df_active['ShotsOnGoal'].mean(),
-        "points_avg": df_active['Points'].mean(),
-        "top_scorers": top_scorers,
-        "scratched": scratched
-    }
     injured_players = injury_df[injury_df['Team'] == team]['Name'].tolist()
     scratched = df[df['Name'].isin(injured_players)][['Name', 'Position']].to_dict('records')
     df_active = df[~df['Name'].isin(injured_players)]
@@ -169,8 +164,6 @@ else:
 if st.checkbox("Show full season schedule data"):
     df = get_full_season_schedule()
     st.dataframe(df)
-
-
 
 
 
