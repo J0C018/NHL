@@ -1,4 +1,4 @@
-# NHL Predictor App (Updated with Error Handling, SportsData.io API, and Date Visibility)
+# NHL Predictor App (Complete Working Version with Date Display and Error Handling)
 
 import streamlit as st
 import pandas as pd
@@ -9,14 +9,13 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-# 1. Load SportsData.io API Key (for local or Streamlit Cloud use)
+# 1. Load SportsData.io API Key from Streamlit Secrets
 SPORTSDATA_API_KEY = st.secrets["SPORTSDATA_API_KEY"] if "SPORTSDATA_API_KEY" in st.secrets else "YOUR_API_KEY_HERE"
 
 # 2. Get Game Schedule Data by Date from SportsData.io
 def get_schedule(date=None):
     if not date:
         date = datetime.datetime.today().strftime('%Y-%m-%d')
-
     url = f"https://api.sportsdata.io/v3/nhl/scores/json/GamesByDate/{date}"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
     response = requests.get(url, headers=headers)
@@ -38,23 +37,20 @@ def get_schedule(date=None):
 
     return pd.DataFrame(game_data)
 
-# 3. (Optional) Get Player Season Stats By Team from SportsData.io
+# 3. Get Player Season Stats By Team
 def get_player_stats_by_team(team):
     url = f"https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsByTeam/2024/{team}"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
     response = requests.get(url, headers=headers)
-
     if response.status_code != 200:
         st.warning(f"Could not fetch player stats for {team}. API Error: {response.status_code}")
         return pd.DataFrame()
-
-    players = response.json()
-    return pd.DataFrame(players)
+    return pd.DataFrame(response.json())
 
 # 4. Feature Engineering
 def create_features(df):
     df['home_win'] = df['homeScore'] > df['awayScore']
-    df['date'] = pd.to_datetime(df['date'])
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
     df['dayofweek'] = df['date'].dt.dayofweek
     df['homeTeam'] = df['homeTeam'].astype('category')
     df['awayTeam'] = df['awayTeam'].astype('category')
@@ -62,7 +58,7 @@ def create_features(df):
     df['awayTeam_code'] = df['awayTeam'].cat.codes
     return df
 
-# 5. Train Model
+# 5. Model Training
 def train_model(df):
     df = df.dropna(subset=['homeScore', 'awayScore'])
     df = create_features(df)
@@ -72,15 +68,13 @@ def train_model(df):
     model.fit(X, y)
     joblib.dump((model, df[['homeTeam', 'awayTeam', 'homeTeam_code', 'awayTeam_code']]), 'nhl_model.pkl')
 
-# 6. Prediction Function with Validation
+# 6. Prediction Logic
 def predict_game(home, away):
     model, mapping_df = joblib.load('nhl_model.pkl')
-
     if home not in mapping_df['homeTeam'].values:
         raise ValueError(f"Home team '{home}' not found in training data.")
     if away not in mapping_df['awayTeam'].values:
         raise ValueError(f"Away team '{away}' not found in training data.")
-
     home_code = mapping_df[mapping_df['homeTeam'] == home]['homeTeam_code'].values[0]
     away_code = mapping_df[mapping_df['awayTeam'] == away]['awayTeam_code'].values[0]
     day = datetime.datetime.today().weekday()
@@ -89,10 +83,9 @@ def predict_game(home, away):
     return "Home Win" if result[0] else "Away Win"
 
 # 7. Streamlit UI
-st.title("🏒 NHL Predictor App (Powered by SportsData.io)")
+st.title("🏒 NHL Predictor App (SportsData.io Edition)")
 st.markdown("""
-This app predicts NHL game outcomes using machine learning and live data from SportsData.io.
-Enter a home and away team abbreviation (e.g., BOS, TOR) and click **Predict**.
+Enter NHL team abbreviations (e.g. `BOS`, `TOR`) and click **Train & Predict** to see the expected game outcome based on historical data.
 """)
 
 home = st.text_input("Home Team Abbreviation", "BOS").upper()
@@ -103,7 +96,8 @@ if st.button("Train & Predict"):
     if df.empty:
         st.error("No games found to train on.")
     else:
-        st.write(f"📅 Date range of training data: {df['date'].min().date()} to {df['date'].max().date()}")
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        st.write(f"📅 Date range of training data: {df['date'].min()} to {df['date'].max()}")
         try:
             train_model(df)
             prediction = predict_game(home, away)
