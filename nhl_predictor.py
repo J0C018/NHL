@@ -1,4 +1,4 @@
-# NHL Predictor App (Complete Working Version with Date Display and Error Handling)
+# NHL Predictor App (Full Season-Based Training Version with Player Stats)
 
 import streamlit as st
 import pandas as pd
@@ -12,11 +12,9 @@ from sklearn.metrics import accuracy_score
 # 1. Load SportsData.io API Key from Streamlit Secrets
 SPORTSDATA_API_KEY = st.secrets["SPORTSDATA_API_KEY"] if "SPORTSDATA_API_KEY" in st.secrets else "YOUR_API_KEY_HERE"
 
-# 2. Get Game Schedule Data by Date from SportsData.io
-def get_schedule(date=None):
-    if not date:
-        date = datetime.datetime.today().strftime('%Y-%m-%d')
-    url = f"https://api.sportsdata.io/v3/nhl/scores/json/GamesByDate/{date}"
+# 2. Get Game Schedule Data from Entire Season (static 2024 year for now)
+def get_full_season_schedule():
+    url = f"https://api.sportsdata.io/v3/nhl/scores/json/Games/2024"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
     response = requests.get(url, headers=headers)
 
@@ -37,8 +35,7 @@ def get_schedule(date=None):
 
     return pd.DataFrame(game_data)
 
-# 3. Get Player Season Stats By Team
-
+# 3. Get Player Season Stats By Team (optional integration)
 def get_player_stats_by_team(team):
     url = f"https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsByTeam/2024/{team}"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
@@ -72,10 +69,11 @@ def train_model(df):
 # 6. Prediction Logic
 def predict_game(home, away):
     model, mapping_df = joblib.load('nhl_model.pkl')
+    st.write("Teams available in training data:", mapping_df['homeTeam'].unique())
     if home not in mapping_df['homeTeam'].values:
-        raise ValueError(f"Home team '{home}' not found in training data.")
+        raise ValueError(f"Home team '{home}' not found in training data. Try one of: {sorted(mapping_df['homeTeam'].unique())}")
     if away not in mapping_df['awayTeam'].values:
-        raise ValueError(f"Away team '{away}' not found in training data.")
+        raise ValueError(f"Away team '{away}' not found in training data. Try one of: {sorted(mapping_df['awayTeam'].unique())}")
     home_code = mapping_df[mapping_df['homeTeam'] == home]['homeTeam_code'].values[0]
     away_code = mapping_df[mapping_df['awayTeam'] == away]['awayTeam_code'].values[0]
     day = datetime.datetime.today().weekday()
@@ -84,18 +82,18 @@ def predict_game(home, away):
     return "Home Win" if result[0] else "Away Win"
 
 # 7. Streamlit UI
-st.title("🏒 NHL Predictor App (SportsData.io Edition)")
+st.title("🏒 NHL Predictor App (Full Season Model)")
 st.markdown("""
-Enter NHL team abbreviations (e.g. `BOS`, `TOR`) and click **Train & Predict** to see the expected game outcome based on historical data.
+This app uses the full 2024 NHL season's data to train a prediction model for upcoming games. Enter team abbreviations (e.g. `BOS`, `TOR`) below.
 """)
 
 home = st.text_input("Home Team Abbreviation", "BOS").upper()
 away = st.text_input("Away Team Abbreviation", "TOR").upper()
 
 if st.button("Train & Predict"):
-    df = get_schedule()
+    df = get_full_season_schedule()
     if df.empty:
-        st.error("No games found to train on.")
+        st.error("No season data found to train on.")
     else:
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
         st.write(f"📅 Date range of training data: {df['date'].min()} to {df['date'].max()}")
@@ -115,15 +113,16 @@ if st.button("Show Player Stats for Home Team"):
         st.info("No player stats found or columns unavailable.")
 
 if st.button("Show Available Teams"):
-    df = get_schedule()
+    df = get_full_season_schedule()
     if not df.empty:
-        st.write("Available home teams from today's schedule:")
+        st.write("Available home teams from season data:")
         st.write(df['homeTeam'].unique())
 
-if st.checkbox("Show full schedule data"):
-    df = get_schedule()
+if st.checkbox("Show full season schedule data"):
+    df = get_full_season_schedule()
     if not df.empty:
         st.dataframe(df)
+
 
 
 
