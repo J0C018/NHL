@@ -1,4 +1,4 @@
-# NHL Predictor App (Updated with Error Handling and SportsData.io API)
+# NHL Predictor App (Updated with Error Handling, SportsData.io API, and Date Visibility)
 
 import streamlit as st
 import pandas as pd
@@ -103,6 +103,7 @@ if st.button("Train & Predict"):
     if df.empty:
         st.error("No games found to train on.")
     else:
+        st.write(f"📅 Date range of training data: {df['date'].min().date()} to {df['date'].max().date()}")
         try:
             train_model(df)
             prediction = predict_game(home, away)
@@ -122,4 +123,10 @@ if st.button("Show Available Teams"):
     if not df.empty:
         st.write("Available home teams from today's schedule:")
         st.write(df['homeTeam'].unique())
+
+if st.checkbox("Show full schedule data"):
+    df = get_schedule()
+    if not df.empty:
+        st.dataframe(df)
+
 
