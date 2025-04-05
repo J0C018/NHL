@@ -167,6 +167,40 @@ if not schedule_df.empty:
         injuries = get_injuries()
         if season_df.empty:
             st.error("Season data not available.")
+        else:
+            season_df['Day'] = pd.to_datetime(season_df['Day'], errors='coerce')
+            st.write(f"📅 Date range of training data: {season_df['Day'].min()} to {season_df['Day'].max()}")
+            try:
+                train_model(season_df, injuries)
+                result = predict_game(home, away, injuries)
+
+                log_prediction(f"{away} @ {home}", result['result'])
+
+                st.success(f"Prediction: {result['result']}")
+                st.info(f"📊 Probability - Home Win: {result['prob_home_win']:.2%} | Away Win: {result['prob_away_win']:.2%}")
+
+                st.subheader("🏒 Top Scorers (Home)")
+                st.json(result['home_top_scorers'] or "No data available")
+
+                st.subheader("🏒 Top Scorers (Away)")
+                st.json(result['away_top_scorers'] or "No data available")
+
+                st.subheader("🚑 Scratched Players (Home)")
+                st.json(result['home_scratched'] or "None listed")
+
+                st.subheader("🚑 Scratched Players (Away)")
+                st.json(result['away_scratched'] or "None listed")
+
+            except Exception as e:
+                st.error(f"Prediction failed: {e}")
+else:
+    st.warning("No games scheduled today.")
+
+if st.checkbox("Show full season schedule data"):
+    st.dataframe(get_full_season_schedule())
+
+if st.sidebar.checkbox("📊 Show Prediction History"):
+    show_prediction_history()
 
 
 
