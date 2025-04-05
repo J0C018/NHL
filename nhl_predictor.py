@@ -3,8 +3,6 @@ import pandas as pd
 import datetime
 import requests
 import joblib
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier
 
 # Load API key
@@ -137,7 +135,7 @@ if not schedule_df.empty:
             try:
                 train_model(full_season_df, injuries)
                 result = predict_game(home, away, injuries)
-                st.success(f"Prediction: {result['result']}\n\n")
+                st.success(f"Prediction: {result['result']}")
                 st.info(f"📊 Probability - Home Win: {result['prob_home_win']:.2%} | Away Win: {result['prob_away_win']:.2%}")
 
                 st.subheader("🏒 Top Scorers (Home)")
@@ -157,6 +155,7 @@ else:
 if st.checkbox("Show full season schedule data"):
     df = get_full_season_schedule()
     st.dataframe(df)
+
 
 
 
