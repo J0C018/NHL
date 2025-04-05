@@ -38,6 +38,7 @@ def get_schedule(date=None):
     return pd.DataFrame(game_data)
 
 # 3. Get Player Season Stats By Team
+
 def get_player_stats_by_team(team):
     url = f"https://api.sportsdata.io/v3/nhl/stats/json/PlayerSeasonStatsByTeam/2024/{team}"
     headers = {"Ocp-Apim-Subscription-Key": SPORTSDATA_API_KEY}
@@ -108,9 +109,10 @@ if st.button("Train & Predict"):
 if st.button("Show Player Stats for Home Team"):
     stats_df = get_player_stats_by_team(home)
     if not stats_df.empty:
-        st.dataframe(stats_df[['Name', 'Position', 'Goals', 'Assists', 'Points', 'ShotsOnGoal']])
+        st.write("Player stats for:", home)
+        st.dataframe(stats_df.filter(items=[col for col in ['Name', 'Position', 'Goals', 'Assists', 'Points', 'ShotsOnGoal'] if col in stats_df.columns]))
     else:
-        st.info("No player stats found.")
+        st.info("No player stats found or columns unavailable.")
 
 if st.button("Show Available Teams"):
     df = get_schedule()
@@ -122,5 +124,6 @@ if st.checkbox("Show full schedule data"):
     df = get_schedule()
     if not df.empty:
         st.dataframe(df)
+
 
 
