@@ -1,125 +1,159 @@
 import streamlit as st
-import pandas as pd
-import datetime
 import requests
-import joblib
+import pandas as pd
+from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
+import joblib
+import os
 
-# --- Constants ---
-BASE_URL = "https://statsapi.web.nhl.com/api/v1"
-CURRENT_SEASON = "20232024"
+st.set_page_config(page_title="NHL Matchup Predictor", layout="wide")
 
-# --- Helpers ---
-def get_today_schedule():
-    today = datetime.datetime.now().strftime('%Y-%m-%d')
-    url = f"{BASE_URL}/schedule?date={today}"
-    try:
-        r = requests.get(url)
-        data = r.json()
-        games = data.get("dates", [{}])[0].get("games", [])
-        return games
-    except Exception as e:
-        st.warning(f"NHL API unreachable: {e}")
-        return []
+BASE_URL = "https://api-web.nhle.com"
 
-def get_team_stats(team_id):
-    url = f"{BASE_URL}/teams/{team_id}/stats"
-    try:
-        r = requests.get(url)
-        stats = r.json().get("stats", [{}])[0].get("splits", [{}])[0].get("stat", {})
-        return stats
-    except:
-        return {}
-
+@st.cache_data(ttl=3600)
 def get_teams():
-    url = f"{BASE_URL}/teams"
+    url = f"{BASE_URL}/v1/teams"
     r = requests.get(url)
-    data = r.json()
-    return {team["name"]: team["id"] for team in data["teams"]}
+    if r.status_code != 200:
+        st.error("Failed to fetch team list.")
+        return {}
+    teams = r.json()["teams"]
+    return {team["abbrev"]: team["id"] for team in teams}
 
-def get_past_games():
-    url = f"{BASE_URL}/schedule?season={CURRENT_SEASON}"
-    try:
-        r = requests.get(url)
-        all_games = []
-        for day in r.json().get("dates", []):
-            all_games.extend(day.get("games", []))
-        return all_games
-    except:
+@st.cache_data(ttl=300)
+def get_today_schedule():
+    today = datetime.today().strftime("%Y-%m-%d")
+    url = f"{BASE_URL}/v1/schedule/{today}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        st.warning("No live schedule found. Using fallback data.")
         return []
+    return r.json().get("games", [])
 
-def prepare_training_data(games, team_id_map):
+@st.cache_data(ttl=3600)
+def get_team_stats(team_id):
+    url = f"{BASE_URL}/v1/team-stats/{team_id}/now"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    stats = r.json()
+    try:
+        data = stats["teamStats"][0]["splits"][0]["stat"]
+        return {
+            "goalsPerGame": float(data.get("goalsPerGame", 0)),
+            "shotsPerGame": float(data.get("shotsPerGame", 0)),
+            "powerPlayPercentage": float(data.get("powerPlayPercentage", 0)),
+        }
+    except:
+        return None
+
+@st.cache_data(ttl=86400)
+def get_game_results(team_id):
+    url = f"{BASE_URL}/v1/club-schedule-season/{team_id}/now"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return pd.DataFrame()
+    games = r.json()["games"]
     rows = []
     for game in games:
-        if game['status']['abstractGameState'] != 'Final':
+        if not game.get("gameOutcome"):
             continue
-        try:
-            home = game['teams']['home']['team']['name']
-            away = game['teams']['away']['team']['name']
-            home_id = team_id_map[home]
-            away_id = team_id_map[away]
-            home_stats = get_team_stats(home_id)
-            away_stats = get_team_stats(away_id)
-            rows.append({
-                'homeTeam': home,
-                'awayTeam': away,
-                'home_win': game['teams']['home']['score'] > game['teams']['away']['score'],
-                'home_goals_for': home_stats.get('goalsPerGame', 0),
-                'away_goals_for': away_stats.get('goalsPerGame', 0),
-                'home_goals_against': home_stats.get('goalsAgainstPerGame', 0),
-                'away_goals_against': away_stats.get('goalsAgainstPerGame', 0),
-                'home_win_pct': home_stats.get('winPct', 0),
-                'away_win_pct': away_stats.get('winPct', 0),
-            })
-        except:
-            continue
+        is_home = game["homeTeamId"] == team_id
+        result = game["gameOutcome"]["lastPeriodType"]
+        rows.append({
+            "homeTeam": game["homeTeamAbbrev"],
+            "awayTeam": game["awayTeamAbbrev"],
+            "homeWin": 1 if (is_home and game["homeTeamResult"] == "W") or
+                             (not is_home and game["awayTeamResult"] == "L") else 0
+        })
     return pd.DataFrame(rows)
 
-def train_model(data):
-    X = data.drop(columns=['homeTeam', 'awayTeam', 'home_win'])
-    y = data['home_win']
+def train_model(team_map):
+    all_games = []
+    for abbrev, team_id in team_map.items():
+        df = get_game_results(team_id)
+        all_games.append(df)
+    full_df = pd.concat(all_games).dropna().drop_duplicates()
+
+    feature_rows = []
+    for _, row in full_df.iterrows():
+        home_id = team_map.get(row["homeTeam"])
+        away_id = team_map.get(row["awayTeam"])
+        home_stats = get_team_stats(home_id)
+        away_stats = get_team_stats(away_id)
+        if not home_stats or not away_stats:
+            continue
+        feature_rows.append({
+            "home_goals": home_stats["goalsPerGame"],
+            "away_goals": away_stats["goalsPerGame"],
+            "home_shots": home_stats["shotsPerGame"],
+            "away_shots": away_stats["shotsPerGame"],
+            "home_pp": home_stats["powerPlayPercentage"],
+            "away_pp": away_stats["powerPlayPercentage"],
+            "homeWin": row["homeWin"]
+        })
+
+    model_df = pd.DataFrame(feature_rows)
+    if model_df.empty:
+        st.error("Not enough historical data to train model.")
+        return None
+    X = model_df.drop(columns=["homeWin"])
+    y = model_df["homeWin"]
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
-    joblib.dump((model, data), 'nhl_model.pkl')
+    joblib.dump(model, "model.pkl")
+    return model
 
-def predict_match(home, away, team_id_map):
-    model, _ = joblib.load('nhl_model.pkl')
-    home_stats = get_team_stats(team_id_map[home])
-    away_stats = get_team_stats(team_id_map[away])
-    X = pd.DataFrame([{
-        'home_goals_for': home_stats.get('goalsPerGame', 0),
-        'away_goals_for': away_stats.get('goalsPerGame', 0),
-        'home_goals_against': home_stats.get('goalsAgainstPerGame', 0),
-        'away_goals_against': away_stats.get('goalsAgainstPerGame', 0),
-        'home_win_pct': home_stats.get('winPct', 0),
-        'away_win_pct': away_stats.get('winPct', 0),
+def predict_game(home_abbrev, away_abbrev, team_map):
+    model = joblib.load("model.pkl")
+    home_id = team_map[home_abbrev]
+    away_id = team_map[away_abbrev]
+    home_stats = get_team_stats(home_id)
+    away_stats = get_team_stats(away_id)
+    if not home_stats or not away_stats:
+        return None
+    X_pred = pd.DataFrame([{
+        "home_goals": home_stats["goalsPerGame"],
+        "away_goals": away_stats["goalsPerGame"],
+        "home_shots": home_stats["shotsPerGame"],
+        "away_shots": away_stats["shotsPerGame"],
+        "home_pp": home_stats["powerPlayPercentage"],
+        "away_pp": away_stats["powerPlayPercentage"]
     }])
-    proba = model.predict_proba(X)[0]
-    pred = model.predict(X)[0]
-    return pred, proba
+    prob = model.predict_proba(X_pred)[0]
+    pred = model.predict(X_pred)[0]
+    return {
+        "prediction": "Home Win" if pred == 1 else "Away Win",
+        "prob_home": prob[1],
+        "prob_away": prob[0],
+        "home_stats": home_stats,
+        "away_stats": away_stats
+    }
 
-# --- UI ---
+# ===================== Streamlit UI =====================
+
 st.title("🏒 NHL Matchup Predictor")
-team_id_map = get_teams()
+teams = get_teams()
 today_games = get_today_schedule()
 
 if today_games:
-    matchups = [f"{g['teams']['away']['team']['name']} @ {g['teams']['home']['team']['name']}" for g in today_games]
-    game_choice = st.selectbox("Select a game to predict:", matchups)
-
-    if st.button("Train & Predict Today’s Game"):
-        past_games = get_past_games()
-        st.write(f"Training data from {CURRENT_SEASON}")
-        df = prepare_training_data(past_games, team_id_map)
-        if df.empty:
-            st.error("Not enough data to train the model.")
-        else:
-            train_model(df)
-            away, home = game_choice.split(" @ ")
-            pred, proba = predict_match(home, away, team_id_map)
-            outcome = "Home Win" if pred else "Away Win"
-            st.success(f"Prediction: {outcome}")
-            st.info(f"Probability - Home Win: {proba[1]:.2%}, Away Win: {proba[0]:.2%}")
+    matchups = [f"{g['awayTeam']['abbrev']} @ {g['homeTeam']['abbrev']}" for g in today_games]
+    selected_game = st.selectbox("Select today's matchup:", matchups)
+    away_abbrev, home_abbrev = selected_game.split(" @ ")
+    
+    if st.button("🔮 Predict Outcome"):
+        with st.spinner("Training model and fetching stats..."):
+            model = train_model(teams)
+            if model:
+                result = predict_game(home_abbrev, away_abbrev, teams)
+                if result:
+                    st.success(f"🏆 Predicted Winner: **{result['prediction']}**")
+                    st.info(f"📊 Probability: Home Win: {result['prob_home']:.2%} | Away Win: {result['prob_away']:.2%}")
+                    st.markdown("### 🔎 Why this prediction?")
+                    st.write(f"**Home Team ({home_abbrev}) Stats:** {result['home_stats']}")
+                    st.write(f"**Away Team ({away_abbrev}) Stats:** {result['away_stats']}")
+                else:
+                    st.error("❌ Could not fetch stats for prediction.")
 else:
-    st.warning("No NHL games scheduled today.")
+    st.warning("No NHL games found for today.")
 
