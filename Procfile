@@ -1,1 +1,1 @@
-web: streamlit run nhl_predictor.py --server.port=$PORT --server.enableCORS false
+web: streamlit run nhl_predictor.py --server.port=10000 --server.address=0.0.0.0
