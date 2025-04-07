@@ -1,71 +1,104 @@
 import streamlit as st
-import pandas as pd
+import os
 import requests
 import datetime
-import os
 
-st.set_page_config(page_title="NHL Matchup Predictor", page_icon="🏒")
+st.set_page_config(page_title="NHL Predictor", page_icon="🏒")
 
-# ✅ Get secrets from Railway env variables
-API_KEY = os.environ.get("RAPIDAPI_KEY")
-API_HOST = os.environ.get("RAPIDAPI_HOST")
-API_BASE = f"https://{API_HOST}"
-
+# Environment variables (configured in Railway)
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
+RAPIDAPI_HOST = os.environ.get("RAPIDAPI_HOST")
 HEADERS = {
-    "x-rapidapi-key": API_KEY,
-    "x-rapidapi-host": API_HOST
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": RAPIDAPI_HOST
 }
+BASE_URL = f"https://{RAPIDAPI_HOST}"
 
-def get_today_schedule():
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    url = f"{API_BASE}/schedule?date={today}"
+# Generic API fetcher
+def fetch(endpoint, params=None):
+    url = f"{BASE_URL}{endpoint}"
     try:
-        r = requests.get(url, headers=HEADERS)
+        r = requests.get(url, headers=HEADERS, params=params)
         r.raise_for_status()
-        data = r.json()
-        return data.get("games", [])
+        return r.json()
     except Exception as e:
-        st.error(f"❌ Failed to load schedule: {e}")
-        return []
-
-def get_teams():
-    try:
-        url = f"{API_BASE}/teams"
-        r = requests.get(url, headers=HEADERS)
-        r.raise_for_status()
-        data = r.json()
-        return {team['id']: team['name'] for team in data.get("teams", [])}
-    except Exception as e:
-        st.error(f"❌ Failed to load team names: {e}")
+        st.warning(f"API error for {endpoint}: {e}")
         return {}
 
-def predict_matchup(home_team, away_team):
-    if len(home_team) > len(away_team):
-        return f"Prediction: {home_team} is slightly favored."
-    else:
-        return f"Prediction: {away_team} is slightly favored."
+# Schedule for today
+def get_today_schedule():
+    today = datetime.datetime.today()
+    return fetch("/nhlschedule", {"year": today.year, "month": today.month, "day": today.day})
 
-# ------------- Streamlit UI ----------------
-st.title("🏒 NHL Matchup Predictor (Powered by RapidAPI)")
+# Stats & data endpoints
+def get_team_stats(team_id):
+    return fetch("/team-statistic", {"teamId": team_id})
 
-teams = get_teams()
-games = get_today_schedule()
+def get_players(team_id):
+    return fetch("/players/id", {"teamId": team_id})
 
-if games and teams:
-    matchup_options = []
-    for g in games:
-        home_id = g.get("homeTeam")
-        away_id = g.get("awayTeam")
-        home = teams.get(home_id, f"Team {home_id}")
-        away = teams.get(away_id, f"Team {away_id}")
-        matchup_options.append((f"{away} @ {home}", home, away))
+def get_player_stats(player_id):
+    return fetch("/player-statistic", {"playerId": player_id})
 
-    selected = st.selectbox("Select a matchup:", [x[0] for x in matchup_options])
-    
-    if st.button("🔮 Predict Result"):
-        match = next((m for m in matchup_options if m[0] == selected), None)
-        if match:
-            result = predict_matchup(match[1], match[2])
-            st.success(result)
+def get_injuries():
+    return fetch("/injuries")
+
+def get_head_to_head(team_id_1, team_id_2):
+    season = datetime.datetime.today().year
+    games_1 = fetch("/schedule-team", {"season": season, "teamId": team_id_1})
+    games_2 = fetch("/schedule-team", {"season": season, "teamId": team_id_2})
+    return games_1, games_2
+
+# Score calculation
+def score_team(team_id, injuries, recent_weight=0.15, h2h_weight=0.15):
+    stats = get_team_stats(team_id)
+    players = get_players(team_id)
+    active_players = []
+    all_points = 0
+
+    if players.get("data"):
+        for p in players["data"]:
+            if not any(i["playerId"] == p["id"] for i in injuries.get("data", [])):
+                stats_p = get_player_stats(p["id"])
+                all_points += stats_p.get("data", {}).get("points", 0)
+                active_players.append(p["name"])
+
+    score = 0
+    score += (stats.get("data", {}).get("goalsPerGame", 0) or 0) * 0.25
+    score += (all_points / max(len(active_players), 1)) * 0.20
+
+    # Recent games factor
+    recent_games = fetch("/nhlscoreboard", {
+        "year": datetime.datetime.today().year,
+        "month": datetime.datetime.today().month,
+        "day": datetime.datetime.today().day,
+        "limit": 5
+    })
+    if recent_games.get("data"):
+        recent_count = len([g for g in recent_games["data"] if g["home"]["id"] == team_id or g["away"]["id"] == team_id])
+        score += recent_count * recent_weight
+
+    return score
+
+# ---------- Streamlit UI ----------
+st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
+
+schedule = get_today_schedule()
+injuries = get_injuries()
+
+if schedule.get("data"):
+    matchups = schedule["data"]
+    matchup_options = [f"{m['away']['name']} @ {m['home']['name']}" for m in matchups]
+    selected = st.selectbox("Choose today's game:", matchup_options)
+
+    if st.button("🔮 Predict Winner"):
+        game = next(g for g in matchups if f"{g['away']['name']} @ {g['home']['name']}" == selected)
+        away_score = score_team(game["away"]["id"], injuries)
+        home_score = score_team(game["home"]["id"], injuries)
+        winner = game["home"]["name"] if home_score > away_score else game["away"]["name"]
+
+        st.success(f"🏆 Predicted Winner: {winner}")
+        st.write(f"🔢 Home score: {home_score:.2f} | Away score: {away_score:.2f}")
 else:
-    st.info("📅 No games found or team data missing.")
+    st.info("No games found for today.")
+
