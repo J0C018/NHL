@@ -1,58 +1,55 @@
 import streamlit as st
 import requests
-import datetime
-import os
+from datetime import datetime
 
-st.set_page_config(page_title="🏒 NHL Matchup Predictor (AI-Enhanced)", layout="centered")
+# Set up page
+st.set_page_config(page_title="NHL Schedule - RapidAPI Live Test")
+st.title("🏒 NHL Schedule - RapidAPI Live Test")
 
-# Load API credentials from Railway environment variables
-API_KEY = os.environ.get("RAPIDAPI_KEY")
-API_HOST = os.environ.get("RAPIDAPI_HOST")
+# Date Setup
+today = datetime.utcnow()
+year = today.strftime("%Y")
+month = today.strftime("%m")
+day = today.strftime("%d")
 
-if not API_KEY or not API_HOST:
-    st.error("❌ Missing API credentials. Please set RAPIDAPI_KEY and RAPIDAPI_HOST as environment variables.")
-    st.stop()
+st.markdown(f"🗓️ Showing games for **{today.strftime('%B %d, %Y')}** (UTC)")
+
+# API credentials (fetched from Railway variables via st.secrets)
+API_KEY = st.secrets["RAPIDAPI_KEY"]
+API_HOST = st.secrets["RAPIDAPI_HOST"]
+
+# API URL
+url = f"https://{API_HOST}/nhlschedule?year={year}&month={month}&day={day}"
 
 headers = {
     "X-RapidAPI-Key": API_KEY,
     "X-RapidAPI-Host": API_HOST
 }
 
-# Get today's date in UTC
-today = datetime.datetime.utcnow()
-year = today.year
-month = today.month
-day = today.day
-
-# Title
-st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
-st.caption(f"🔄 Showing games for **{today.strftime('%B %d, %Y')}** (UTC)")
-
-# Build API URL
-url = f"https://{API_HOST}/nhlschedule?year={year}&month={month:02d}&day={day:02d}"
-
-# Request data
+# Fetch data
 try:
     response = requests.get(url, headers=headers, timeout=10)
     response.raise_for_status()
     data = response.json()
-except Exception as e:
-    st.error(f"❌ Failed to fetch schedule: {e}")
-    st.stop()
 
-# Parse and display matchups
-games = data.get("games", [])
-
-if not games:
-    st.info("📅 No NHL games found or could not parse matchups.")
-else:
-    st.subheader("Today's Matchups")
-    for game in games:
-        try:
-            matchup = game.get("name", "Matchup")
-            start_time = game.get("date", "").replace("T", " ").replace("Z", " UTC")
-            st.markdown(f"### {matchup}")
-            st.markdown(f"🕒 Start Time: `{start_time}`")
+    games = data.get("games", [])
+    if games:
+        st.success(f"✅ {len(games)} games found today.\n")
+        for game in games:
+            name = game.get("name", "Unnamed Game")
+            date = game.get("date", "No date")
+            venue = (
+                game.get("competitions", [{}])[0]
+                .get("venue", {})
+                .get("fullName", "Unknown Venue")
+            )
+            st.subheader(name)
+            st.write(f"🕒 **Date**: {date}")
+            st.write(f"📍 **Venue**: {venue}")
             st.markdown("---")
-        except Exception as parse_err:
-            st.warning(f"⚠️ Couldn't parse a game: {parse_err}")
+    else:
+        st.info("🔍 No valid matchups found for today.")
+
+except requests.exceptions.RequestException as e:
+    st.error(f"❌ Failed to fetch schedule: {e}")
+
