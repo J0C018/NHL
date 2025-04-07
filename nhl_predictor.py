@@ -1,5 +1,4 @@
 import os
-import requests
 import datetime
 import time
 import streamlit as st
@@ -7,6 +6,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+import requests
 
 # -------------------------------
 # RAPIDAPI CONFIGURATION (for stats)
@@ -27,69 +27,62 @@ HEADERS = {
 # -------------------------------
 def scrape_schedule_nhl(date_str):
     """
-    Scrape the NHL schedule for the specified date from the NHL website.
-    
-    We use Selenium (with headless Chrome) to load the page
-    "https://www.nhl.com/schedule?date=YYYY-MM-DD" and then parse the HTML.
-    
-    Adjust the URL and selectors as needed if the NHL website changes.
+    Scrape the NHL schedule from the official NHL schedule page.
+    URL is assumed to be: https://www.nhl.com/schedule?date=YYYY-MM-DD
+    IMPORTANT: You must verify and adjust the CSS selectors below by inspecting the page.
     """
     # Set up headless Chrome
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    # Add any additional options if necessary
-    driver = webdriver.Chrome(options=options)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+
+    # If needed, specify the chromedriver path:
+    # driver = webdriver.Chrome(executable_path="/path/to/chromedriver", options=chrome_options)
+    driver = webdriver.Chrome(options=chrome_options)
     
     url = f"https://www.nhl.com/schedule?date={date_str}"
     driver.get(url)
-    # Wait for the page to fully load (adjust the sleep time if necessary)
+    # Allow time for page to load; adjust if necessary
     time.sleep(5)
     html = driver.page_source
     driver.quit()
-    
+
     soup = BeautifulSoup(html, "lxml")
     games = []
     
-    # The selectors below are based on the NHL schedule page as inspected.
-    # In this example, we assume each game is within a <div> element with a class containing "ScheduleGame".
-    game_elements = soup.find_all("div", class_="ScheduleGame")
-    for element in game_elements:
+    # YOU NEED TO UPDATE THESE SELECTORS BASED ON THE PAGE'S CURRENT HTML
+    # Example selectors (these are placeholders):
+    game_cards = soup.select("div.gameCard")  # Assume each game is in a div with class "gameCard"
+    for card in game_cards:
         try:
-            # Assume team names are in <span> elements with class "teamName"
-            team_spans = element.find_all("span", class_="teamName")
-            if len(team_spans) < 2:
-                continue
-            away_team = team_spans[0].get_text(strip=True)
-            home_team = team_spans[1].get_text(strip=True)
-            # Assume game time is in a <span> with class "gameTime"
-            time_elem = element.find("span", class_="gameTime")
-            game_time = time_elem.get_text(strip=True) if time_elem else "TBD"
-            
-            games.append({
-                "away": away_team,
-                "home": home_team,
-                "time": game_time,
-                "date": date_str,
-                # Build a minimal structure expected by our predictor.
-                "teams": {
-                    "away": {"team": {"name": away_team, "id": None}},
-                    "home": {"team": {"name": home_team, "id": None}}
-                }
-            })
+            away_elem = card.select_one("span.awayTeamName")
+            home_elem = card.select_one("span.homeTeamName")
+            time_elem = card.select_one("span.gameTime")
+            if away_elem and home_elem:
+                away_team = away_elem.get_text(strip=True)
+                home_team = home_elem.get_text(strip=True)
+                game_time = time_elem.get_text(strip=True) if time_elem else "TBD"
+                games.append({
+                    "away": away_team,
+                    "home": home_team,
+                    "time": game_time,
+                    "date": date_str,
+                    # For prediction, we need a structure like this; team IDs must be mapped later:
+                    "teams": {
+                        "away": {"team": {"name": away_team, "id": None}},
+                        "home": {"team": {"name": home_team, "id": None}}
+                    }
+                })
         except Exception as e:
-            st.write(f"Error parsing a game element: {e}")
+            st.write(f"Error processing a game card: {e}")
             continue
     return games
 
 # -------------------------------
-# RAPIDAPI ENDPOINT FUNCTIONS (Team, Standings, Stats)
+# RAPIDAPI ENDPOINT FUNCTIONS FOR STATS
 # -------------------------------
 def fetch_teams():
-    """
-    Fetch the NHL team list using RapidAPI.
-    Endpoint: GET /nhlteamlist
-    """
+    """Fetch the NHL team list using RapidAPI."""
     url = f"https://{API_HOST}/nhlteamlist"
     response = requests.get(url, headers=HEADERS)
     if response.status_code != 200:
@@ -103,10 +96,7 @@ def fetch_teams():
     return teams
 
 def fetch_standings(season="2024"):
-    """
-    Fetch NHL standings for the given season using RapidAPI.
-    Endpoint: GET /nhlstandings?year=YYYY
-    """
+    """Fetch NHL standings using RapidAPI."""
     url = f"https://{API_HOST}/nhlstandings"
     params = {"year": season}
     response = requests.get(url, headers=HEADERS, params=params)
@@ -125,55 +115,46 @@ def fetch_standings(season="2024"):
     return standings
 
 def fetch_team_stats(team_id):
-    """
-    Fetch detailed statistics for a team using RapidAPI.
-    Endpoint: GET /team-statistic?teamId=TEAM_ID
-    """
+    """Fetch detailed statistics for a team using RapidAPI."""
     url = f"https://{API_HOST}/team-statistic"
     params = {"teamId": team_id}
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        st.error(f"Error fetching team stats for team {team_id}: HTTP {response.status_code}")
+        st.error(f"Error fetching stats for team {team_id}: HTTP {response.status_code}")
         return {}
     return response.json()
 
 def fetch_team_players(team_id):
-    """
-    Fetch players for a team using RapidAPI.
-    Endpoint: GET /nhlteamplayers?teamid=TEAM_ID
-    """
+    """Fetch players for a team using RapidAPI."""
     url = f"https://{API_HOST}/nhlteamplayers"
     params = {"teamid": team_id}
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        st.error(f"Error fetching team players for team {team_id}: HTTP {response.status_code}")
+        st.error(f"Error fetching players for team {team_id}: HTTP {response.status_code}")
         return []
     data = response.json()
     return data.get("players", [])
 
 def fetch_player_stats(player_id):
-    """
-    Fetch detailed statistics for a player using RapidAPI.
-    Endpoint: GET /player-statistic?playerId=PLAYER_ID
-    """
+    """Fetch detailed statistics for a player using RapidAPI."""
     url = f"https://{API_HOST}/player-statistic"
     params = {"playerId": player_id}
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        st.error(f"Error fetching player stats for player {player_id}: HTTP {response.status_code}")
+        st.error(f"Error fetching stats for player {player_id}: HTTP {response.status_code}")
         return {}
     return response.json()
 
 # -------------------------------
-# PREDICTION LOGIC FUNCTIONS
+# PREDICTION LOGIC
 # -------------------------------
 def calculate_team_score(team_stats, is_home):
     """
     Calculate a weighted score for a team based on:
-      - Win Percentage: 40%
-      - Goal Differential (normalized): 30%
-      - Corsi For Percentage: 15%
-      - Home Advantage: +15% for home team
+      - Win Percentage (40%)
+      - Normalized Goal Differential (30%)
+      - Corsi For Percentage (15%)
+      - Home Advantage (15% bonus for home teams)
     """
     win_pct = team_stats.get("winPercentage", 0)
     goal_diff = team_stats.get("goalDifferential", 0)
@@ -186,22 +167,23 @@ def calculate_team_score(team_stats, is_home):
 
 def predict_game(game, standings):
     """
-    Predict the outcome of a game using team standings.
-    Expects the game object to have a structure:
-      game["teams"]["home"]["team"] and game["teams"]["away"]["team"]
-    Note: If team IDs are missing (from the scraped schedule), you may need to map team names to IDs.
+    Predict a game's outcome based on team statistics.
+    NOTE: If the scraped schedule doesn't provide team IDs, you need to map team names to IDs.
     """
     teams_info = game.get("teams", {})
     home_team = teams_info.get("home", {}).get("team", {})
     away_team = teams_info.get("away", {}).get("team", {})
     home_id = home_team.get("id")
     away_id = away_team.get("id")
+    
     if not home_id or not away_id:
-        return None  # Cannot predict without team IDs
+        return None  # Without team IDs from the schedule, prediction won't work.
+    
     home_stats = standings.get(home_id, {})
     away_stats = standings.get(away_id, {})
     home_score = calculate_team_score(home_stats, is_home=True)
     away_score = calculate_team_score(away_stats, is_home=False)
+    
     predicted_winner = home_team.get("name") if home_score >= away_score else away_team.get("name")
     confidence = abs(home_score - away_score)
     return {
@@ -219,33 +201,37 @@ def predict_game(game, standings):
 def main():
     st.title("NHL Outcome Predictor")
     st.markdown("""
-    This application predicts NHL game outcomes using the schedule scraped directly from the NHL website,
-    and combines that with team and player statistics (retrieved via RapidAPI).
+    This application predicts NHL game outcomes by scraping today's (or a selected date's) schedule from the NHL website
+    and combining it with team and player statistics from RapidAPI.
+    
+    **Important:** You must update the CSS selectors in the scraping function to match the current NHL schedule page.
     """)
     
+    # Let the user select a date (for example, today)
     selected_date = st.date_input(
         "Select a date to fetch games:",
-        value=datetime.date(2024, 10, 1),
+        value=datetime.date.today(),
         min_value=datetime.date(2024, 1, 1),
         max_value=datetime.date(2025, 12, 31)
     )
     date_str = selected_date.strftime("%Y-%m-%d")
     st.subheader(f"Games Scheduled for {date_str}")
     
+    # Scrape the schedule from the NHL website
     with st.spinner(f"Scraping schedule for {date_str}..."):
         schedule = scrape_schedule_nhl(date_str)
     if not schedule:
-        st.warning("No games found for the selected date. Check the scraping logic and NHL website structure.")
+        st.warning("No games found for the selected date. Please verify your selectors and URL.")
         return
     
-    # Fetch RapidAPI data
+    # Fetch additional data via RapidAPI
     with st.spinner("Fetching team list..."):
         teams = fetch_teams()
     season = st.text_input("Enter season for standings (e.g., 2024):", "2024")
     with st.spinner("Fetching standings..."):
         standings = fetch_standings(season)
     
-    # Build a dropdown of games based on the scraped schedule
+    # Build a dropdown of games from the scraped schedule
     game_options = []
     game_map = {}
     for game in schedule:
@@ -258,6 +244,7 @@ def main():
     selected_game_str = st.selectbox("Select a game to predict its outcome:", game_options)
     selected_game = game_map[selected_game_str]
     
+    # Attempt prediction
     prediction = predict_game(selected_game, standings)
     if prediction:
         st.subheader("Prediction Results")
@@ -266,13 +253,13 @@ def main():
         st.markdown(f"**Predicted Winner:** {prediction['predictedWinner']}")
         st.markdown(f"**Confidence Score:** {prediction['confidence']}")
     else:
-        st.error("Could not generate a prediction for the selected game. (Team IDs may be missing.)")
-        st.info("If the scraped schedule lacks team IDs, consider mapping team names to their corresponding IDs from the team list.")
+        st.error("Prediction could not be generated. It may be due to missing team IDs from the scraped data.")
+        st.info("If team IDs are missing, please map scraped team names to RapidAPI team IDs manually.")
         return
     
-    # (Optional) Display additional details for teams/players via RapidAPI here.
-    st.subheader("Additional Team and Player Data")
-    st.write("Further integration (e.g., team stats, player stats) can be added below as needed.")
+    # You can then integrate additional details (team stats, player stats) as needed.
+    st.subheader("Additional Data")
+    st.write("Additional integration for detailed stats can be added here.")
 
 if __name__ == "__main__":
     main()
