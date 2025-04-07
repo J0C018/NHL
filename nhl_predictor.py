@@ -4,7 +4,7 @@ import datetime
 import streamlit as st
 import pandas as pd
 
-# --- API Configuration ---
+# --- API Configuration for RapidAPI endpoints (Team/Player Stats, etc.) ---
 API_HOST = "nhl-api5.p.rapidapi.com"
 API_KEY = os.environ.get("RAPIDAPI_KEY")
 if not API_KEY:
@@ -18,26 +18,21 @@ HEADERS = {
 
 # --- API Fetch Functions ---
 
-def fetch_schedule(year, month, day):
+def fetch_schedule_from_nhl(date_str):
     """
-    Fetch NHL schedule data for the specified date using:
-    GET /nhlschedule?year=YYYY&month=MM&day=DD
+    Fetch NHL schedule data for the specified date from the NHL website API:
+    GET https://statsapi.web.nhl.com/api/v1/schedule?date=YYYY-MM-DD
     """
-    url = f"https://{API_HOST}/nhlschedule"
-    params = {
-        "year": str(year),
-        "month": str(month).zfill(2),
-        "day": str(day).zfill(2)
-    }
-    response = requests.get(url, headers=HEADERS, params=params)
-    if response.status_code == 404:
-        return []
-    elif response.status_code != 200:
-        st.error(f"Error fetching schedule data! HTTP {response.status_code}")
+    url = f"https://statsapi.web.nhl.com/api/v1/schedule?date={date_str}"
+    response = requests.get(url)
+    if response.status_code != 200:
+        st.error(f"Error fetching schedule data from NHL website! HTTP {response.status_code}")
         return []
     data = response.json()
-    # Adjust the key if necessary based on the API's JSON structure.
-    return data.get("games", [])
+    # The NHL API returns a "dates" list; if available, take the first element's games.
+    if data.get("dates"):
+        return data["dates"][0].get("games", [])
+    return []
 
 def fetch_teams():
     """
@@ -181,15 +176,12 @@ def main():
     st.markdown("""
     This application predicts the outcomes of NHL games using historical team statistics.
     
-    **Endpoints Used:**
-    - **Schedule:** `/nhlschedule?year=YYYY&month=MM&day=DD` (Returns games for a specific day)
-    - **Team List:** `/nhlteamlist`
-    - **Standings:** `/nhlstandings?year=YYYY`
-    - **Team Stats:** `/team-statistic?teamId=...`
-    - **Team Players:** `/nhlteamplayers?teamid=...`
-    - **Player Stats:** `/player-statistic?playerId=...`
+    **Data Sources:**
+    - **Schedule:** Pulled from the official NHL website API  
+      (`https://statsapi.web.nhl.com/api/v1/schedule?date=YYYY-MM-DD`)
+    - **Team List, Standings, Team/Player Stats:** Pulled via RapidAPI endpoints.
     
-    *Note:* The example parameters (e.g., 2022, a specific day) are just examples. You can change them to fetch data for any day or season.
+    *Note:* The example parameters (like a specific date) are just examples. You can change them to fetch data for any valid date or season.
     """)
     
     # Single date selection (fetch schedule for one day)
@@ -199,17 +191,14 @@ def main():
         min_value=datetime.date(2020, 1, 1),
         max_value=datetime.date(2025, 12, 31)
     )
-    year = selected_date.year
-    month = selected_date.month
-    day = selected_date.day
-    date_str = f"{year}-{str(month).zfill(2)}-{str(day).zfill(2)}"
+    date_str = selected_date.strftime("%Y-%m-%d")
     st.subheader(f"Games Scheduled for {date_str}")
     
-    with st.spinner(f"Fetching schedule for {date_str}..."):
-        schedule = fetch_schedule(year, month, day)
+    with st.spinner(f"Fetching schedule for {date_str} from NHL website..."):
+        schedule = fetch_schedule_from_nhl(date_str)
     
     if not schedule:
-        st.warning("No games found for the selected date. Verify that the API has up-to-date schedule data for that date.")
+        st.warning("No games found for the selected date. Please verify the date or check if games are scheduled.")
         return
     
     with st.spinner("Fetching team list..."):
@@ -268,13 +257,13 @@ def main():
         with st.expander(f"{home_team.get('name')} Players"):
             home_players = fetch_team_players(home_team_id)
             if home_players:
-                # Display as a table
                 home_players_df = pd.DataFrame(home_players)
                 st.dataframe(home_players_df)
-                # Optionally, let the user select a player to view detailed stats
-                selected_home_player = st.selectbox("Select a Home Team Player for stats", 
-                                                      options=home_players_df["id"].tolist(),
-                                                      format_func=lambda pid: home_players_df.loc[home_players_df["id"] == pid, "name"].iloc[0])
+                selected_home_player = st.selectbox(
+                    "Select a Home Team Player for stats", 
+                    options=home_players_df["id"].tolist(),
+                    format_func=lambda pid: home_players_df.loc[home_players_df["id"] == pid, "name"].iloc[0]
+                )
                 if selected_home_player:
                     st.markdown("**Home Player Stats:**")
                     player_stats = fetch_player_stats(selected_home_player)
@@ -285,9 +274,11 @@ def main():
             if away_players:
                 away_players_df = pd.DataFrame(away_players)
                 st.dataframe(away_players_df)
-                selected_away_player = st.selectbox("Select an Away Team Player for stats", 
-                                                      options=away_players_df["id"].tolist(),
-                                                      format_func=lambda pid: away_players_df.loc[away_players_df["id"] == pid, "name"].iloc[0])
+                selected_away_player = st.selectbox(
+                    "Select an Away Team Player for stats", 
+                    options=away_players_df["id"].tolist(),
+                    format_func=lambda pid: away_players_df.loc[away_players_df["id"] == pid, "name"].iloc[0]
+                )
                 if selected_away_player:
                     st.markdown("**Away Player Stats:**")
                     player_stats = fetch_player_stats(selected_away_player)
@@ -295,5 +286,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
