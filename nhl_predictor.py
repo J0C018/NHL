@@ -6,7 +6,7 @@ import os
 
 st.set_page_config(page_title="NHL Matchup Predictor", page_icon="🏒")
 
-# ✅ Environment-based secrets (for Railway)
+# ✅ Get secrets from Railway env variables
 API_KEY = os.environ.get("RAPIDAPI_KEY")
 API_HOST = os.environ.get("RAPIDAPI_HOST")
 API_BASE = f"https://{API_HOST}"
@@ -16,7 +16,6 @@ HEADERS = {
     "x-rapidapi-host": API_HOST
 }
 
-# 🔄 Get today's schedule
 def get_today_schedule():
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     url = f"{API_BASE}/schedule?date={today}"
@@ -29,7 +28,6 @@ def get_today_schedule():
         st.error(f"❌ Failed to load schedule: {e}")
         return []
 
-# Get all teams and map ID → name
 def get_teams():
     try:
         url = f"{API_BASE}/teams"
@@ -41,15 +39,14 @@ def get_teams():
         st.error(f"❌ Failed to load team names: {e}")
         return {}
 
-# 🔮 Simple prediction logic
 def predict_matchup(home_team, away_team):
     if len(home_team) > len(away_team):
         return f"Prediction: {home_team} is slightly favored."
     else:
         return f"Prediction: {away_team} is slightly favored."
 
-# ------------------ UI -------------------
-st.title("🏒 NHL Matchup Predictor (RapidAPI)")
+# ------------- Streamlit UI ----------------
+st.title("🏒 NHL Matchup Predictor (Powered by RapidAPI)")
 
 teams = get_teams()
 games = get_today_schedule()
