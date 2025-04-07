@@ -3,135 +3,75 @@ import requests
 import datetime
 import os
 
-# Page config
 st.set_page_config(page_title="NHL Matchup Predictor (AI-Enhanced)", page_icon="🏒")
 
-# Environment variables from Railway
-API_KEY = os.environ.get("RAPIDAPI_KEY")
-API_HOST = os.environ.get("RAPIDAPI_HOST")
+# RapidAPI credentials from Railway environment variables
+RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 
 HEADERS = {
-    "x-rapidapi-host": API_HOST,
-    "x-rapidapi-key": API_KEY
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": RAPIDAPI_HOST
 }
 
-BASE_URL = f"https://{API_HOST}"
+BASE_URL = f"https://{RAPIDAPI_HOST}"
 
-# Date setup: force April 6, 2025 for live test
-target_date = datetime.datetime(2025, 4, 6)
-year = target_date.strftime('%Y')
-month = target_date.strftime('%m')
-day = target_date.strftime('%d')
-
-# Fetch today's games
-def get_schedule():
+def get_schedule(date):
+    """Fetches the NHL schedule for a specific date."""
+    year = date.strftime("%Y")
+    month = date.strftime("%m")
+    day = date.strftime("%d")
     url = f"{BASE_URL}/nhlschedule?year={year}&month={month}&day={day}"
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.json()
-
-def get_team_ids():
-    url = f"{BASE_URL}/team/id"
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.json().get("teams", [])
-
-def get_team_stats(team_id):
-    url = f"{BASE_URL}/team-statistic?teamId={team_id}"
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.json()
-
-def get_recent_performance(team_id):
-    url = f"{BASE_URL}/schedule-team?season={year}&teamId={team_id}"
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.json()
-
-def get_injuries():
-    url = f"{BASE_URL}/injuries"
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.json().get("injuries", [])
-
-def get_head_to_head_summary(game_id):
-    url = f"{BASE_URL}/nhlsummary?id={game_id}"
-    r = requests.get(url, headers=HEADERS)
-    r.raise_for_status()
-    return r.json()
-
-def predict_game(home_id, away_id, game_id):
     try:
-        home_stats = get_team_stats(home_id)
-        away_stats = get_team_stats(away_id)
-
-        injuries = get_injuries()
-        head_to_head = get_head_to_head_summary(game_id)
-
-        home_score = 0
-        away_score = 0
-
-        # Recent performance (15%)
-        home_recent = get_recent_performance(home_id)
-        away_recent = get_recent_performance(away_id)
-        home_score += 15 * len(home_recent.get("schedule", []))
-        away_score += 15 * len(away_recent.get("schedule", []))
-
-        # Injuries (5%) for stars
-        key_players = ["Connor McDavid", "Sidney Crosby", "Nathan MacKinnon"]
-        for inj in injuries:
-            if inj.get("player", "") in key_players:
-                if str(home_id) in inj.get("teamId", ""):
-                    home_score -= 5
-                if str(away_id) in inj.get("teamId", ""):
-                    away_score -= 5
-
-        # Head-to-head (15%)
-        if "previousGames" in head_to_head:
-            for game in head_to_head["previousGames"]:
-                winner = game.get("winner", "")
-                if str(home_id) in winner:
-                    home_score += 15
-                elif str(away_id) in winner:
-                    away_score += 15
-
-        # Generic team strength (65%)
-        home_score += 65 * float(home_stats.get("wins", 0))
-        away_score += 65 * float(away_stats.get("wins", 0))
-
-        if home_score > away_score:
-            return f"Prediction: 🏠 Home team ({home_id}) wins!"
-        else:
-            return f"Prediction: 🚨 Away team ({away_id}) wins!"
-
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        return response.json()
     except Exception as e:
-        return f"Error in prediction: {e}"
+        st.error(f"❌ Failed to load schedule: {e}")
+        return {}
+
+def extract_matchups(schedule_json):
+    """Extracts matchups from the /nhlschedule response."""
+    games = schedule_json.get("20250406", {}).get("calendar", [])
+    matchups = []
+    for game in games:
+        try:
+            away = game["awayTeam"]["teamName"]
+            home = game["homeTeam"]["teamName"]
+            game_id = game["gameId"]
+            matchups.append({
+                "label": f"{away} @ {home}",
+                "away": away,
+                "home": home,
+                "id": game_id
+            })
+        except Exception as e:
+            continue  # Skip malformed entries
+    return matchups
+
+def predict_matchup(matchup):
+    """Dummy prediction logic placeholder."""
+    # TODO: Replace with AI-enhanced logic
+    return f"Prediction: {matchup['home']} has a slight edge over {matchup['away']}."
 
 # ---------- Streamlit UI ----------
 st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
 
-try:
-    schedule = get_schedule()
-    st.write("📦 Raw schedule data:", schedule)  # DEBUG LINE
+today = datetime.datetime(2025, 4, 6)  # Test date for known 10PM EST game
+schedule_data = get_schedule(today)
 
-    games = schedule.get("games", []) if isinstance(schedule, dict) else []
-    if not games:
-        st.info("📅 No games found for today.")
-    else:
-        team_ids = get_team_ids()
-        options = [f"{g['awayTeam']} @ {g['homeTeam']}" for g in games]
-        selected_game = st.selectbox("Choose a matchup:", options)
-
+if schedule_data:
+    matchups = extract_matchups(schedule_data)
+    if matchups:
+        options = [m["label"] for m in matchups]
+        selected = st.selectbox("Select a game:", options)
         if st.button("🔮 Predict Result"):
-            idx = options.index(selected_game)
-            game = games[idx]
-            home_id = game["homeId"]
-            away_id = game["awayId"]
-            game_id = game["gameId"]
-            result = predict_game(home_id, away_id, game_id)
-            st.success(result)
-
-except Exception as e:
-    st.error(f"❌ Error: {e}")
-
+            selected_matchup = next((m for m in matchups if m["label"] == selected), None)
+            if selected_matchup:
+                result = predict_matchup(selected_matchup)
+                st.success(result)
+    else:
+        st.info("📅 No NHL games found or could not parse matchups.")
+else:
+    st.warning("⚠️ No schedule data available.")
 
