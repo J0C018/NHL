@@ -1,11 +1,14 @@
 import streamlit as st
+import pandas as pd
 import requests
 import datetime
+import os
 
 st.set_page_config(page_title="NHL Matchup Predictor", page_icon="🏒")
 
-API_KEY = st.secrets["RAPIDAPI_KEY"]
-API_HOST = st.secrets["RAPIDAPI_HOST"]
+# ✅ Environment-based secrets (for Railway)
+API_KEY = os.environ.get("RAPIDAPI_KEY")
+API_HOST = os.environ.get("RAPIDAPI_HOST")
 API_BASE = f"https://{API_HOST}"
 
 HEADERS = {
@@ -13,6 +16,7 @@ HEADERS = {
     "x-rapidapi-host": API_HOST
 }
 
+# 🔄 Get today's schedule
 def get_today_schedule():
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     url = f"{API_BASE}/schedule?date={today}"
@@ -25,43 +29,46 @@ def get_today_schedule():
         st.error(f"❌ Failed to load schedule: {e}")
         return []
 
-def get_team_name(team_id):
-    url = f"{API_BASE}/teams"
+# Get all teams and map ID → name
+def get_teams():
     try:
+        url = f"{API_BASE}/teams"
         r = requests.get(url, headers=HEADERS)
         r.raise_for_status()
-        teams = r.json().get("teams", [])
-        for team in teams:
-            if str(team.get("id")) == str(team_id):
-                return team.get("name", f"Team {team_id}")
-        return f"Team {team_id}"
+        data = r.json()
+        return {team['id']: team['name'] for team in data.get("teams", [])}
     except Exception as e:
-        return f"Team {team_id}"
+        st.error(f"❌ Failed to load team names: {e}")
+        return {}
 
+# 🔮 Simple prediction logic
 def predict_matchup(home_team, away_team):
-    # 🧠 Placeholder logic
     if len(home_team) > len(away_team):
         return f"Prediction: {home_team} is slightly favored."
     else:
         return f"Prediction: {away_team} is slightly favored."
 
-st.title("🏒 NHL Matchup Predictor")
+# ------------------ UI -------------------
+st.title("🏒 NHL Matchup Predictor (RapidAPI)")
 
+teams = get_teams()
 games = get_today_schedule()
 
-if games:
+if games and teams:
     matchup_options = []
     for g in games:
-        home = get_team_name(g["homeTeam"])
-        away = get_team_name(g["awayTeam"])
+        home_id = g.get("homeTeam")
+        away_id = g.get("awayTeam")
+        home = teams.get(home_id, f"Team {home_id}")
+        away = teams.get(away_id, f"Team {away_id}")
         matchup_options.append((f"{away} @ {home}", home, away))
 
-    selected_label = st.selectbox("Select a game:", [x[0] for x in matchup_options])
+    selected = st.selectbox("Select a matchup:", [x[0] for x in matchup_options])
+    
     if st.button("🔮 Predict Result"):
-        selected_game = next(x for x in matchup_options if x[0] == selected_label)
-        home, away = selected_game[1], selected_game[2]
-        result = predict_matchup(home, away)
-        st.success(result)
+        match = next((m for m in matchup_options if m[0] == selected), None)
+        if match:
+            result = predict_matchup(match[1], match[2])
+            st.success(result)
 else:
-    st.info("📅 No NHL games found for today.")
-
+    st.info("📅 No games found or team data missing.")
