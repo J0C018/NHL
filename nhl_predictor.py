@@ -17,13 +17,13 @@ HEADERS = {
 
 BASE_URL = f"https://{API_HOST}"
 
-# Date setup: we force April 6, 2025 as user test target
+# Date setup: force April 6, 2025 for live test
 target_date = datetime.datetime(2025, 4, 6)
 year = target_date.strftime('%Y')
 month = target_date.strftime('%m')
 day = target_date.strftime('%d')
 
-# Functions to fetch data
+# Fetch today's games
 def get_schedule():
     url = f"{BASE_URL}/nhlschedule?year={year}&month={month}&day={day}"
     r = requests.get(url, headers=HEADERS)
@@ -60,7 +60,6 @@ def get_head_to_head_summary(game_id):
     r.raise_for_status()
     return r.json()
 
-# Weighted AI matchup logic
 def predict_game(home_id, away_id, game_id):
     try:
         home_stats = get_team_stats(home_id)
@@ -78,7 +77,7 @@ def predict_game(home_id, away_id, game_id):
         home_score += 15 * len(home_recent.get("schedule", []))
         away_score += 15 * len(away_recent.get("schedule", []))
 
-        # Injuries (5%) if star players missing
+        # Injuries (5%) for stars
         key_players = ["Connor McDavid", "Sidney Crosby", "Nathan MacKinnon"]
         for inj in injuries:
             if inj.get("player", "") in key_players:
@@ -96,7 +95,7 @@ def predict_game(home_id, away_id, game_id):
                 elif str(away_id) in winner:
                     away_score += 15
 
-        # Generic team strength (65%) — simple example
+        # Generic team strength (65%)
         home_score += 65 * float(home_stats.get("wins", 0))
         away_score += 65 * float(away_stats.get("wins", 0))
 
@@ -108,19 +107,21 @@ def predict_game(home_id, away_id, game_id):
     except Exception as e:
         return f"Error in prediction: {e}"
 
-# UI
+# ---------- Streamlit UI ----------
 st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
 
 try:
     schedule = get_schedule()
-    games = schedule.get("games", [])
+    st.write("📦 Raw schedule data:", schedule)  # DEBUG LINE
 
+    games = schedule.get("games", []) if isinstance(schedule, dict) else []
     if not games:
         st.info("📅 No games found for today.")
     else:
         team_ids = get_team_ids()
         options = [f"{g['awayTeam']} @ {g['homeTeam']}" for g in games]
         selected_game = st.selectbox("Choose a matchup:", options)
+
         if st.button("🔮 Predict Result"):
             idx = options.index(selected_game)
             game = games[idx]
@@ -132,4 +133,5 @@ try:
 
 except Exception as e:
     st.error(f"❌ Error: {e}")
+
 
