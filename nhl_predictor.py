@@ -36,7 +36,6 @@ def fetch_schedule(date_str):
         return []
     
     data = response.json()
-    # Update key here if the API returns the schedule under a different name.
     return data.get("games", [])
 
 def fetch_teams():
@@ -137,24 +136,49 @@ def predict_game(game, standings):
 # --- Main Streamlit App ---
 
 def main():
-    st.title("NHL Outcome Predictor for Today's Games")
+    st.title("NHL Outcome Predictor")
     st.markdown("""
-    This application predicts the outcomes of NHL games scheduled for today by using historical team statistics.
-    It fetches today's schedule, displays the games in a dropdown, and applies a weighted model 
-    (based on win percentage, goal differential, and Corsi for percentage with a home advantage bonus)
-    to predict the outcome.
+    This application predicts the outcomes of NHL games by using historical team statistics.
+    You can select a specific date or a range of dates (from 2020 to 2025) to fetch games and see predictions.
+    The prediction model is based on win percentage, goal differential, and Corsi for percentage with a home advantage bonus.
     """)
+
+    # Date selection: allow a single date or a date range
+    date_selection = st.date_input(
+        "Select a date or date range to fetch games:",
+        value=(datetime.date.today(), datetime.date.today()),
+        min_value=datetime.date(2020, 1, 1),
+        max_value=datetime.date(2025, 12, 31)
+    )
     
-    # Use today's date (ensure this is within an active season)
-    today = datetime.date.today()
-    date_str = today.strftime("%Y-%m-%d")
-    st.subheader(f"Games Scheduled for {date_str}")
-    
-    with st.spinner("Fetching today's schedule..."):
-        schedule = fetch_schedule(date_str)
-    
-    if not schedule:
-        st.warning(f"No games found for {date_str}. Verify that the API has up-to-date schedule data for today.")
+    # Aggregate schedule for the selected date(s)
+    schedule_list = []
+    if isinstance(date_selection, tuple):
+        start_date, end_date = date_selection
+        if start_date > end_date:
+            st.error("Start date must be before end date.")
+            return
+        
+        current_date = start_date
+        while current_date <= end_date:
+            date_str = current_date.strftime("%Y-%m-%d")
+            with st.spinner(f"Fetching schedule for {date_str}..."):
+                games = fetch_schedule(date_str)
+            if games:
+                for game in games:
+                    game["date"] = date_str  # annotate game with its date
+                    schedule_list.append(game)
+            current_date += datetime.timedelta(days=1)
+    else:
+        date_str = date_selection.strftime("%Y-%m-%d")
+        with st.spinner(f"Fetching schedule for {date_str}..."):
+            schedule_list = fetch_schedule(date_str)
+        # Annotate each game with its date
+        for game in schedule_list:
+            game["date"] = date_str
+
+    if not schedule_list:
+        st.warning("No games found for the selected date(s). Verify that the API has up-to-date schedule data for those dates.")
         return
     
     with st.spinner("Fetching team details..."):
@@ -164,22 +188,19 @@ def main():
     with st.spinner("Fetching standings..."):
         standings = fetch_standings(season)
     
-    # Build dropdown list of today's games using the updated team structure
+    # Build dropdown list of games with dates
     game_options = []
     game_map = {}
-    for game in schedule:
+    for game in schedule_list:
         teams_info = game.get("teams", {})
         home_team = teams_info.get("home", {}).get("team", {})
         away_team = teams_info.get("away", {}).get("team", {})
         home_name = home_team.get("name", "Unknown")
         away_name = away_team.get("name", "Unknown")
-        display_str = f"{away_name} @ {home_name}"
+        # Include the game date in the display string
+        display_str = f"{game.get('date')} - {away_name} @ {home_name}"
         game_options.append(display_str)
         game_map[display_str] = game
-    
-    if not game_options:
-        st.warning("No scheduled games available for today.")
-        return
     
     selected_game_str = st.selectbox("Select a game to predict its outcome:", game_options)
     selected_game = game_map[selected_game_str]
@@ -196,4 +217,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
