@@ -21,28 +21,28 @@ HEADERS = {
 def fetch_schedule(date_str):
     """
     Fetch NHL schedule data for the specified date.
-    Uses the endpoint provided in the RapidAPI Playground:
-    GET /schedule?date=<YYYY-MM-DD>
+    Uses the endpoint: GET /schedule?date=<YYYY-MM-DD>
+    Assumes the API returns a JSON object with a "games" key.
     """
     url = f"https://{API_HOST}/schedule"
     params = {"date": date_str}
     response = requests.get(url, headers=HEADERS, params=params)
     
     if response.status_code == 404:
-        # No games found for the date
+        # No data found for this date
         return []
     elif response.status_code != 200:
         st.error(f"Error fetching schedule data! HTTP {response.status_code}")
         return []
     
     data = response.json()
-    # The API returns game data under the key "schedule"
-    return data.get("schedule", [])
+    # Update key here if the API returns the schedule under a different name.
+    return data.get("games", [])
 
 def fetch_teams():
     """
     Fetch NHL team details.
-    Uses GET /teams.
+    Uses: GET /teams
     """
     url = f"https://{API_HOST}/teams"
     response = requests.get(url, headers=HEADERS)
@@ -60,7 +60,7 @@ def fetch_teams():
 def fetch_standings(season="2023"):
     """
     Fetch NHL standings for the specified season.
-    Uses GET /standings?season=<year>
+    Uses: GET /standings?season=<year>
     """
     url = f"https://{API_HOST}/standings"
     params = {"season": season}
@@ -94,24 +94,25 @@ def calculate_team_score(team_stats, is_home):
     goal_diff = team_stats.get("goalDifferential", 0)
     corsi = team_stats.get("corsiForPercentage", 0)
     
-    # Normalize goal differential to bring it into a comparable range
+    # Normalize goal differential (adjust factor as needed)
     normalized_goal_diff = goal_diff / 20.0
-    
     score = (win_pct * 0.4) + (normalized_goal_diff * 0.3) + (corsi * 0.15)
     if is_home:
-        score += 0.15  # Home advantage bonus
+        score += 0.15
     return score
 
 def predict_game(game, standings):
     """
-    Uses historical standings data to predict the outcome of a game.
-    Assumes the game object has 'homeTeam' and 'awayTeam' with 'id' and 'name'.
+    Predicts the outcome of a game using historical standings data.
+    The game object is expected to have a nested structure:
+      game["teams"]["home"]["team"] and game["teams"]["away"]["team"]
     """
-    home_team = game.get("homeTeam", {})
-    away_team = game.get("awayTeam", {})
+    teams_info = game.get("teams", {})
+    home_team = teams_info.get("home", {}).get("team", {})
+    away_team = teams_info.get("away", {}).get("team", {})
+    
     home_id = home_team.get("id")
     away_id = away_team.get("id")
-    
     if not home_id or not away_id:
         return None
     
@@ -138,17 +139,17 @@ def predict_game(game, standings):
 def main():
     st.title("NHL Outcome Predictor for Today's Games")
     st.markdown("""
-    This application predicts the outcomes of NHL games scheduled for today using historical team statistics.
-    It fetches today’s schedule, displays the games in a dropdown, and applies a weighted model (based on win percentage,
-    goal differential, and Corsi for percentage with a home advantage bonus) to predict the outcome.
+    This application predicts the outcomes of NHL games scheduled for today by using historical team statistics.
+    It fetches today's schedule, displays the games in a dropdown, and applies a weighted model 
+    (based on win percentage, goal differential, and Corsi for percentage with a home advantage bonus)
+    to predict the outcome.
     """)
     
-    # Automatically use today's date (in YYYY-MM-DD format)
+    # Use today's date (ensure this is within an active season)
     today = datetime.date.today()
     date_str = today.strftime("%Y-%m-%d")
     st.subheader(f"Games Scheduled for {date_str}")
     
-    # Fetch today's schedule
     with st.spinner("Fetching today's schedule..."):
         schedule = fetch_schedule(date_str)
     
@@ -156,21 +157,22 @@ def main():
         st.warning(f"No games found for {date_str}. Verify that the API has up-to-date schedule data for today.")
         return
     
-    # Fetch team details and standings
     with st.spinner("Fetching team details..."):
         teams = fetch_teams()
     
-    # Season input to ensure historical stats match the current season
     season = st.text_input("Enter season for standings (e.g., 2023):", "2023")
     with st.spinner("Fetching standings..."):
         standings = fetch_standings(season)
     
-    # Build the list of games for the dropdown
+    # Build dropdown list of today's games using the updated team structure
     game_options = []
     game_map = {}
     for game in schedule:
-        home_name = game.get("homeTeam", {}).get("name", "Unknown")
-        away_name = game.get("awayTeam", {}).get("name", "Unknown")
+        teams_info = game.get("teams", {})
+        home_team = teams_info.get("home", {}).get("team", {})
+        away_team = teams_info.get("away", {}).get("team", {})
+        home_name = home_team.get("name", "Unknown")
+        away_name = away_team.get("name", "Unknown")
         display_str = f"{away_name} @ {home_name}"
         game_options.append(display_str)
         game_map[display_str] = game
@@ -179,11 +181,9 @@ def main():
         st.warning("No scheduled games available for today.")
         return
     
-    # Dropdown to select a game
     selected_game_str = st.selectbox("Select a game to predict its outcome:", game_options)
     selected_game = game_map[selected_game_str]
     
-    # Run the prediction for the selected game
     prediction = predict_game(selected_game, standings)
     if prediction:
         st.subheader("Prediction Results")
@@ -196,3 +196,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
