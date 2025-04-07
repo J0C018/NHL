@@ -4,7 +4,7 @@ import datetime
 import streamlit as st
 import pandas as pd
 
-# Constants for the RapidAPI NHL API
+# API Configuration
 API_HOST = "nhl-api5.p.rapidapi.com"
 API_KEY = os.environ.get("RAPIDAPI_KEY")
 if not API_KEY:
@@ -16,174 +16,157 @@ HEADERS = {
     "X-RapidAPI-Host": API_HOST
 }
 
-# --- API FETCH FUNCTIONS ---
+# --- Data Fetching Functions ---
 
-def fetch_games(date_str):
+def fetch_schedule(date_str):
     """
-    Fetches games scheduled for a given date.
-    Expected endpoint: GET https://nhl-api5.p.rapidapi.com/games?date=<YYYY-MM-DD>
+    Fetch NHL schedule data for a given date.
+    Based on the documentation from the NHL schedule endpoint.
     """
-    url = f"https://{API_HOST}/games"
-    params = {"date": date_str}
+    url = f"https://{API_HOST}/schedule"
+    params = {
+        "date": date_str  # Ensure this matches the expected format (YYYY-MM-DD)
+    }
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        st.error("Error fetching games data!")
+        st.error(f"Error fetching schedule data! HTTP {response.status_code}")
         return []
     data = response.json()
-    # Assuming the response JSON has a key 'games' that is a list of game objects
-    return data.get("games", [])
+    # The API returns a key (e.g., "schedule") with an array of game objects.
+    return data.get("schedule", [])
 
 def fetch_teams():
     """
-    Fetches team details.
-    Expected endpoint: GET https://nhl-api5.p.rapidapi.com/teams
+    Fetch NHL team details.
     """
     url = f"https://{API_HOST}/teams"
     response = requests.get(url, headers=HEADERS)
     if response.status_code != 200:
-        st.error("Error fetching teams data!")
+        st.error(f"Error fetching teams data! HTTP {response.status_code}")
         return {}
     data = response.json()
-    # Build a dictionary mapping team IDs to team details
     teams = {}
+    # Expecting a key "teams" containing a list of team objects.
     for team in data.get("teams", []):
-        teams[team.get("id")] = team
+        team_id = team.get("id")
+        teams[team_id] = team
     return teams
 
-def fetch_standings():
+def fetch_standings(season="2023"):
     """
-    Fetches current team standings.
-    Expected endpoint: GET https://nhl-api5.p.rapidapi.com/standings
+    Fetch current NHL standings for a given season.
     """
     url = f"https://{API_HOST}/standings"
-    response = requests.get(url, headers=HEADERS)
+    params = {
+        "season": season  # Adjust the season parameter as required.
+    }
+    response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
-        st.error("Error fetching standings data!")
+        st.error(f"Error fetching standings data! HTTP {response.status_code}")
         return {}
     data = response.json()
-    # Build a dictionary mapping team IDs to standings/stats
     standings = {}
-    # We assume the response includes a list of team standings under "standings"
+    # Expecting a key "standings" containing team statistics.
     for team in data.get("standings", []):
-        # Example expected keys (may differ based on API): 'teamId', 'winPercentage', 'goalDifferential'
         team_id = team.get("teamId")
         standings[team_id] = {
             "winPercentage": team.get("winPercentage", 0),
             "goalDifferential": team.get("goalDifferential", 0),
-            # If available, the API might provide possession metrics; if not, these remain None.
-            "corsiForPercentage": team.get("corsiForPercentage")
+            "corsiForPercentage": team.get("corsiForPercentage", 0)  # If provided
         }
     return standings
 
-# --- PREDICTION LOGIC FUNCTIONS ---
+# --- Prediction Logic ---
 
 def calculate_team_score(team_stats, is_home):
     """
-    Calculates a simple score for a team using available metrics.
-    We use:
-      - winPercentage (assumed to be 0 to 1)
-      - goalDifferential (normalized by an assumed scale)
-      - corsiForPercentage (if available, as a fraction)
-      - Bonus for home advantage.
-    Weights are chosen to sum approximately to 1.
+    Calculates a score for a team based on key metrics.
+    Weights (example):
+      - Win Percentage: 40%
+      - Goal Differential (normalized): 30%
+      - Corsi For Percentage: 15%
+      - Home Advantage Bonus: 15% for home team
     """
     win_pct = team_stats.get("winPercentage", 0)
     goal_diff = team_stats.get("goalDifferential", 0)
-    # Normalize goal differential (assuming a scale; adjust denominator as needed)
-    normalized_goal_diff = goal_diff / 20.0  
-    corsi = team_stats.get("corsiForPercentage")
-    corsi_weight = 0.15
-    corsi_score = (corsi if corsi is not None else 0) * corsi_weight
-
-    # Weighted components: winPct (0.4), goal_diff (0.3), corsi (0.15)
-    score = (win_pct * 0.4) + (normalized_goal_diff * 0.3) + corsi_score
-
-    # Home advantage bonus
+    corsi = team_stats.get("corsiForPercentage", 0)
+    normalized_goal_diff = goal_diff / 20.0  # Normalize goal differential by an assumed scale
+    score = (win_pct * 0.4) + (normalized_goal_diff * 0.3) + (corsi * 0.15)
     if is_home:
-        score += 0.15
-
+        score += 0.15  # Home advantage bonus
     return score
 
 def predict_game(game, standings):
     """
-    Given a game object and standings dictionary,
-    compute a prediction for the winner.
+    Predicts the outcome of a game based on team standings.
+    The game object is expected to include team objects for 'homeTeam' and 'awayTeam'
+    with fields 'id' and 'name'.
     """
-    # Assuming game object contains keys "homeTeam" and "awayTeam" with "id" and "name"
-    home_team = game.get("homeTeam")
-    away_team = game.get("awayTeam")
-    if not home_team or not away_team:
-        return None
-
+    home_team = game.get("homeTeam", {})
+    away_team = game.get("awayTeam", {})
     home_id = home_team.get("id")
     away_id = away_team.get("id")
+    if not home_id or not away_id:
+        return None
 
-    home_stats = standings.get(home_id, {"winPercentage": 0, "goalDifferential": 0})
-    away_stats = standings.get(away_id, {"winPercentage": 0, "goalDifferential": 0})
+    home_stats = standings.get(home_id, {})
+    away_stats = standings.get(away_id, {})
 
     home_score = calculate_team_score(home_stats, is_home=True)
     away_score = calculate_team_score(away_stats, is_home=False)
 
-    prediction = {
+    predicted_winner = home_team.get("name") if home_score >= away_score else away_team.get("name")
+    confidence = abs(home_score - away_score)
+
+    return {
         "homeTeam": home_team.get("name", "Unknown"),
         "awayTeam": away_team.get("name", "Unknown"),
-        "homeScore": home_score,
-        "awayScore": away_score,
-        "predictedWinner": home_team.get("name") if home_score >= away_score else away_team.get("name"),
-        "confidence": abs(home_score - away_score)
+        "homeScore": round(home_score, 3),
+        "awayScore": round(away_score, 3),
+        "predictedWinner": predicted_winner,
+        "confidence": round(confidence, 3)
     }
-    return prediction
 
-# --- MAIN STREAMLIT APP ---
+# --- Main Streamlit App ---
 
 def main():
     st.title("NHL Outcome Predictor")
     st.markdown("""
-    This application predicts the outcome of NHL games using team standings and available performance metrics 
-    from the RapidAPI NHL API (nhl-api5). It pulls today’s games, retrieves current team standings, and then applies 
-    a weighted model to predict winners.
+    This app predicts NHL game outcomes by fetching today's schedule, team details, 
+    and standings data from the RapidAPI NHL API (nhl-api5). The prediction model uses 
+    win percentage, goal differential, and Corsi for percentage (if available), along with a home advantage bonus.
     """)
 
-    # Get today's date in YYYY-MM-DD format
-    today_date = datetime.date.today().strftime("%Y-%m-%d")
-    st.header(f"Games for {today_date}")
+    # Input date and season
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    date_input = st.text_input("Enter game date (YYYY-MM-DD):", today_str)
+    season_input = st.text_input("Enter season (e.g., 2023):", "2023")
 
-    # Fetch data from API endpoints
-    with st.spinner("Fetching games..."):
-        games = fetch_games(today_date)
+    # Fetch data using our functions
+    with st.spinner("Fetching schedule..."):
+        schedule = fetch_schedule(date_input)
+    if not schedule:
+        st.warning(f"No games found for {date_input}.")
+        return
+
     with st.spinner("Fetching teams..."):
         teams = fetch_teams()
     with st.spinner("Fetching standings..."):
-        standings = fetch_standings()
+        standings = fetch_standings(season_input)
 
-    if not games:
-        st.info("No games found for today.")
-        return
-
+    # Generate predictions for each game
     predictions = []
-    for game in games:
+    for game in schedule:
         pred = predict_game(game, standings)
         if pred:
             predictions.append(pred)
 
-    if not predictions:
-        st.error("Unable to generate predictions for the games today.")
-        return
-
-    # Convert predictions to DataFrame for display
-    df_predictions = pd.DataFrame(predictions)
-    # Order columns for clarity
-    df_predictions = df_predictions[["homeTeam", "awayTeam", "homeScore", "awayScore", "predictedWinner", "confidence"]]
-    st.subheader("Predicted Outcomes")
-    st.dataframe(df_predictions)
-
-    st.markdown("""
-    **Scoring Breakdown:**  
-    - **Win Percentage (40%)**: Reflects overall success.
-    - **Goal Differential (30%)**: Normalized by an assumed scale.
-    - **Corsi For % (15%)**: Included if available.
-    - **Home Advantage (15%)**: A bonus for the home team.
-    """)
+    if predictions:
+        df = pd.DataFrame(predictions)
+        st.subheader("Predicted Outcomes")
+        st.dataframe(df)
+    else:
+        st.warning("No predictions could be generated for the selected date.")
 
 if __name__ == "__main__":
     main()
