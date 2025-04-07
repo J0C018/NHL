@@ -57,7 +57,7 @@ def fetch_teams():
         teams[team_id] = team
     return teams
 
-def fetch_standings(season="2023"):
+def fetch_standings(season="2024"):
     """
     Fetch NHL standings for the specified season.
     Uses: GET /standings?season=<year>
