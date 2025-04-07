@@ -4,7 +4,7 @@ import datetime
 import streamlit as st
 import pandas as pd
 
-# API Configuration
+# --- Configuration & Constants ---
 API_HOST = "nhl-api5.p.rapidapi.com"
 API_KEY = os.environ.get("RAPIDAPI_KEY")
 if not API_KEY:
@@ -16,23 +16,22 @@ HEADERS = {
     "X-RapidAPI-Host": API_HOST
 }
 
-# --- Data Fetching Functions ---
+# --- API Fetch Functions ---
 
 def fetch_schedule(date_str):
     """
-    Fetch NHL schedule data for a given date.
-    Based on the documentation from the NHL schedule endpoint.
+    Fetch NHL schedule data for the specified date.
+    Uses the endpoint based on:
+    https://rapidapi.com/belchiorarkad-FqvHs2EDOtP/api/nhl-api5/playground/apiendpoint_5516d398-4fc0-4db5-9894-3d86d09516c0
     """
     url = f"https://{API_HOST}/schedule"
-    params = {
-        "date": date_str  # Ensure this matches the expected format (YYYY-MM-DD)
-    }
+    params = {"date": date_str}  # Date must be in YYYY-MM-DD format
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
         st.error(f"Error fetching schedule data! HTTP {response.status_code}")
         return []
     data = response.json()
-    # The API returns a key (e.g., "schedule") with an array of game objects.
+    # The API returns schedule data under the key "schedule"
     return data.get("schedule", [])
 
 def fetch_teams():
@@ -46,7 +45,7 @@ def fetch_teams():
         return {}
     data = response.json()
     teams = {}
-    # Expecting a key "teams" containing a list of team objects.
+    # Expecting a "teams" key with a list of team objects
     for team in data.get("teams", []):
         team_id = team.get("id")
         teams[team_id] = team
@@ -54,43 +53,40 @@ def fetch_teams():
 
 def fetch_standings(season="2023"):
     """
-    Fetch current NHL standings for a given season.
+    Fetch NHL standings for a given season.
     """
     url = f"https://{API_HOST}/standings"
-    params = {
-        "season": season  # Adjust the season parameter as required.
-    }
+    params = {"season": season}  # Adjust the season parameter as needed
     response = requests.get(url, headers=HEADERS, params=params)
     if response.status_code != 200:
         st.error(f"Error fetching standings data! HTTP {response.status_code}")
         return {}
     data = response.json()
     standings = {}
-    # Expecting a key "standings" containing team statistics.
+    # Expecting a "standings" key with team statistics
     for team in data.get("standings", []):
         team_id = team.get("teamId")
         standings[team_id] = {
             "winPercentage": team.get("winPercentage", 0),
             "goalDifferential": team.get("goalDifferential", 0),
-            "corsiForPercentage": team.get("corsiForPercentage", 0)  # If provided
+            "corsiForPercentage": team.get("corsiForPercentage", 0)  # Optional: if available
         }
     return standings
 
-# --- Prediction Logic ---
+# --- Prediction Logic Functions ---
 
 def calculate_team_score(team_stats, is_home):
     """
-    Calculates a score for a team based on key metrics.
-    Weights (example):
+    Calculates a score for a team based on weighted factors:
       - Win Percentage: 40%
       - Goal Differential (normalized): 30%
       - Corsi For Percentage: 15%
-      - Home Advantage Bonus: 15% for home team
+      - Home Advantage: 15% bonus for home teams
     """
     win_pct = team_stats.get("winPercentage", 0)
     goal_diff = team_stats.get("goalDifferential", 0)
     corsi = team_stats.get("corsiForPercentage", 0)
-    normalized_goal_diff = goal_diff / 20.0  # Normalize goal differential by an assumed scale
+    normalized_goal_diff = goal_diff / 20.0  # Normalization factor (adjustable)
     score = (win_pct * 0.4) + (normalized_goal_diff * 0.3) + (corsi * 0.15)
     if is_home:
         score += 0.15  # Home advantage bonus
@@ -98,9 +94,8 @@ def calculate_team_score(team_stats, is_home):
 
 def predict_game(game, standings):
     """
-    Predicts the outcome of a game based on team standings.
-    The game object is expected to include team objects for 'homeTeam' and 'awayTeam'
-    with fields 'id' and 'name'.
+    Uses standings data to predict the outcome of the game.
+    Assumes the game object contains keys 'homeTeam' and 'awayTeam', each with 'id' and 'name'.
     """
     home_team = game.get("homeTeam", {})
     away_team = game.get("awayTeam", {})
@@ -130,43 +125,60 @@ def predict_game(game, standings):
 # --- Main Streamlit App ---
 
 def main():
-    st.title("NHL Outcome Predictor")
+    st.title("NHL Outcome Predictor for Today's Games")
     st.markdown("""
-    This app predicts NHL game outcomes by fetching today's schedule, team details, 
-    and standings data from the RapidAPI NHL API (nhl-api5). The prediction model uses 
-    win percentage, goal differential, and Corsi for percentage (if available), along with a home advantage bonus.
+    This application predicts the outcome of NHL games scheduled for today.
+    It fetches today's schedule, retrieves current team standings, and applies a weighted model 
+    (based on win percentage, goal differential, and Corsi for percentage with a home advantage bonus)
+    to predict the outcome.
     """)
 
-    # Input date and season
+    # Use today's date in YYYY-MM-DD format
     today_str = datetime.date.today().strftime("%Y-%m-%d")
-    date_input = st.text_input("Enter game date (YYYY-MM-DD):", today_str)
-    season_input = st.text_input("Enter season (e.g., 2023):", "2023")
+    st.subheader(f"Games Scheduled for {today_str}")
 
-    # Fetch data using our functions
-    with st.spinner("Fetching schedule..."):
-        schedule = fetch_schedule(date_input)
+    # Fetch today's schedule, teams, and standings
+    with st.spinner("Fetching today's schedule..."):
+        schedule = fetch_schedule(today_str)
     if not schedule:
-        st.warning(f"No games found for {date_input}.")
+        st.warning(f"No games found for {today_str}.")
         return
 
-    with st.spinner("Fetching teams..."):
+    with st.spinner("Fetching team details..."):
         teams = fetch_teams()
+    season_input = st.text_input("Enter season (e.g., 2023):", "2023")
     with st.spinner("Fetching standings..."):
         standings = fetch_standings(season_input)
 
-    # Generate predictions for each game
-    predictions = []
+    # Create a list of games for the dropdown
+    game_options = []
+    game_lookup = {}
     for game in schedule:
-        pred = predict_game(game, standings)
-        if pred:
-            predictions.append(pred)
+        # Construct a display string for the game (e.g., "Team A vs. Team B")
+        home = game.get("homeTeam", {}).get("name", "Unknown")
+        away = game.get("awayTeam", {}).get("name", "Unknown")
+        game_str = f"{away} @ {home}"
+        game_options.append(game_str)
+        game_lookup[game_str] = game
 
-    if predictions:
-        df = pd.DataFrame(predictions)
-        st.subheader("Predicted Outcomes")
-        st.dataframe(df)
-    else:
-        st.warning("No predictions could be generated for the selected date.")
+    if not game_options:
+        st.warning("No games available for selection.")
+        return
+
+    # Dropdown for selecting a game
+    selected_game_str = st.selectbox("Select a game to predict its outcome:", game_options)
+    selected_game = game_lookup.get(selected_game_str)
+
+    if selected_game:
+        prediction = predict_game(selected_game, standings)
+        if prediction:
+            st.subheader("Prediction Results")
+            df = pd.DataFrame([prediction])
+            st.dataframe(df)
+            st.markdown(f"**Predicted Winner:** {prediction['predictedWinner']}")
+            st.markdown(f"**Confidence Score:** {prediction['confidence']}")
+        else:
+            st.error("Could not generate a prediction for the selected game.")
 
 if __name__ == "__main__":
     main()
