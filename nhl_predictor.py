@@ -5,74 +5,73 @@ import os
 
 st.set_page_config(page_title="NHL Matchup Predictor (AI-Enhanced)", page_icon="🏒")
 
-# Get env vars
-RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+# Get API details from environment variables (Railway secrets)
+API_KEY = os.environ.get("RAPIDAPI_KEY")
+API_HOST = os.environ.get("RAPIDAPI_HOST")
 
 HEADERS = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": RAPIDAPI_HOST
+    "X-RapidAPI-Key": API_KEY,
+    "X-RapidAPI-Host": API_HOST
 }
-BASE_URL = f"https://{RAPIDAPI_HOST}"
 
-def get_scoreboard(date):
-    url = f"{BASE_URL}/nhlscoreboard"
-    params = {
-        "year": date.strftime("%Y"),
-        "month": date.strftime("%m"),
-        "day": date.strftime("%d")
-    }
-    try:
-        res = requests.get(url, headers=HEADERS, params=params)
-        res.raise_for_status()
-        return res.json()
-    except Exception as e:
-        st.error(f"Failed to load scoreboard: {e}")
-        return {}
+BASE_URL = f"https://{API_HOST}"
 
-def extract_matchups(scoreboard_json):
-    games = scoreboard_json.get("games", [])
-    matchups = []
-    for game in games:
-        st.write("📦 Game Object:", game)  # <--- DEBUG
-        try:
-            home = game["homeTeam"].get("teamName") or game["homeTeam"].get("abbreviation")
-            away = game["awayTeam"].get("teamName") or game["awayTeam"].get("abbreviation")
-            game_id = game.get("gameId") or game.get("id")
-            if home and away:
-                matchups.append({
-                    "label": f"{away} @ {home}",
-                    "home": home,
-                    "away": away,
-                    "id": game_id
-                })
-        except KeyError:
-            continue
-    return matchups
+# Set today’s date
+today = datetime.datetime.now().strftime("%Y-%m-%d")
+year = datetime.datetime.now().year
+month = f"{datetime.datetime.now().month:02d}"
+day = f"{datetime.datetime.now().day:02d}"
 
-def predict_matchup(matchup):
-    return f"Prediction: {matchup['home']} is favored over {matchup['away']}."
-
-# ---- App ----
 st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
 
-today = datetime.datetime(2025, 4, 6)
-scoreboard_data = get_scoreboard(today)
+def get_schedule_data():
+    try:
+        url = f"{BASE_URL}/nhlscoreboard?year={year}&month={month}&day={day}"
+        response = requests.get(url, headers=HEADERS)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"❌ Failed to load schedule: {e}")
+        return None
+
+# Load schedule data
+scoreboard_data = get_schedule_data()
+
+# Show raw response for debugging
+if scoreboard_data:
+    st.subheader("📦 Raw API Response:")
+    st.json(scoreboard_data)
+
+def extract_games(data):
+    try:
+        games = data.get("games", [])
+        matchups = []
+        for game in games:
+            # Try multiple formats depending on API structure
+            try:
+                home = game['homeTeam']['abbreviation']
+                away = game['awayTeam']['abbreviation']
+            except KeyError:
+                try:
+                    home = game['teams']['home']['abbreviation']
+                    away = game['teams']['away']['abbreviation']
+                except KeyError:
+                    continue  # Skip if format not found
+            matchups.append(f"{away} @ {home}")
+        return matchups
+    except Exception as e:
+        st.error(f"Error extracting games: {e}")
+        return []
 
 if scoreboard_data:
-    st.subheader("🧾 Raw Scoreboard Response")
-    st.json(scoreboard_data)  # <--- DEBUG
+    matchups = extract_games(scoreboard_data)
 
-    matchups = extract_matchups(scoreboard_data)
     if matchups:
-        labels = [m["label"] for m in matchups]
-        selected = st.selectbox("Select a matchup to predict:", labels)
-        if st.button("🔮 Predict Result"):
-            match = next((m for m in matchups if m["label"] == selected), None)
-            if match:
-                st.success(predict_matchup(match))
+        selected = st.selectbox("Select a game to predict:", matchups)
+        if st.button("🔮 Predict Winner"):
+            st.success(f"Prediction: {selected.split('@')[1].strip()} is favored!")
     else:
-        st.info("📅 No valid matchups found for today.")
+        st.info("📅 No NHL games found or could not parse matchups.")
 else:
-    st.warning("⚠️ Could not retrieve game data.")
+    st.info("📅 Failed to retrieve any game data.")
 
