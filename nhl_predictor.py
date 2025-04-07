@@ -1,99 +1,39 @@
 import streamlit as st
 import pandas as pd
 import requests
-import datetime
 
-st.set_page_config(page_title="🏒 NHL Matchup Predictor", page_icon="🏒")
+st.set_page_config(page_title="NHL Matchup Predictor", page_icon="🏒")
 
-PROXY_URL = "https://web-production-7027.up.railway.app"
+# Set environment variable in Railway as X_RAPIDAPI_KEY
+API_KEY = st.secrets["X_RAPIDAPI_KEY"]
+API_HOST = "nhl-api5.p.rapidapi.com"
 
-def get_teams():
+HEADERS = {
+    "X-RapidAPI-Key": API_KEY,
+    "X-RapidAPI-Host": API_HOST
+}
+
+def get_team_players(team_id):
     try:
-        r = requests.get(f"{PROXY_URL}/api/v1/teams")
+        url = f"https://{API_HOST}/players/id?teamId={team_id}"
+        r = requests.get(url, headers=HEADERS)
         r.raise_for_status()
-        teams = r.json()
-        return {team['id']: team for team in teams}
+        return r.json()
     except Exception as e:
-        st.error(f"❌ Failed to load teams: {e}")
+        st.error(f"Failed to fetch team players: {e}")
         return {}
 
-def get_today_schedule():
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    url = f"{PROXY_URL}/api/v1/schedule/{today}"
-    try:
-        r = requests.get(url)
-        r.raise_for_status()
-        return r.json().get("games", [])
-    except Exception as e:
-        st.error(f"❌ Failed to fetch schedule: {e}")
-        return []
+st.title("🏒 NHL Matchup Predictor (RapidAPI Edition)")
 
-def get_team_stats(team_id):
-    try:
-        url = f"{PROXY_URL}/api/v1/club-stats-season/{team_id}/20232024"
-        r = requests.get(url)
-        r.raise_for_status()
-        data = r.json()
-        stats = data.get("regularSeason", {}).get("teamStats", {})
-        return {
-            "goalsPerGame": stats.get("goalsPerGame"),
-            "powerPlayPct": stats.get("powerPlayPct"),
-            "penaltyKillPct": stats.get("penaltyKillPct"),
-        }
-    except Exception as e:
-        return {
-            "goalsPerGame": 0,
-            "powerPlayPct": 0,
-            "penaltyKillPct": 0,
-            "error": str(e)
-        }
+# Example: Fetch player data for Washington Capitals (ID: 16)
+team_id = st.text_input("Enter NHL Team ID (e.g. 16 for Capitals)", "16")
 
-def predict_winner(home_stats, away_stats):
-    if home_stats["goalsPerGame"] > away_stats["goalsPerGame"]:
-        return "🏠 Home team is favored based on scoring."
-    elif away_stats["goalsPerGame"] > home_stats["goalsPerGame"]:
-        return "🛫 Away team has stronger scoring and is slightly favored."
+if st.button("Fetch Team Players"):
+    data = get_team_players(team_id)
+    if "players" in data:
+        players = data["players"]
+        df = pd.DataFrame(players)
+        st.dataframe(df[["name", "position", "age", "nationality"]])
     else:
-        return "🤝 It’s a very close matchup!"
-
-# Streamlit UI
-st.title("🏒 NHL Matchup Predictor")
-
-teams = get_teams()
-games = get_today_schedule()
-
-if teams and games:
-    matchups = []
-    for game in games:
-        home_id = game["homeTeam"]["id"]
-        away_id = game["awayTeam"]["id"]
-        home_name = teams[home_id]["fullName"]
-        away_name = teams[away_id]["fullName"]
-        matchups.append((f"{away_name} @ {home_name}", home_id, away_id, home_name, away_name))
-
-    options = [m[0] for m in matchups]
-    selected = st.selectbox("Select a game from today's matchups:", options)
-
-    if st.button("🔮 Predict Result"):
-        selected_match = next(m for m in matchups if m[0] == selected)
-        _, home_id, away_id, home_name, away_name = selected_match
-
-        st.subheader("📊 Team Stats")
-
-        home_stats = get_team_stats(home_id)
-        away_stats = get_team_stats(away_id)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"### 🏠 {home_name}")
-            st.write(home_stats)
-        with col2:
-            st.markdown(f"### 🛫 {away_name}")
-            st.write(away_stats)
-
-        prediction = predict_winner(home_stats, away_stats)
-        st.success(prediction)
-
-else:
-    st.warning("No games or team data available.")
+        st.warning("No player data found.")
 
