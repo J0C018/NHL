@@ -3,65 +3,56 @@ import requests
 import datetime
 import os
 
-st.set_page_config(page_title="NHL Schedule Viewer", page_icon="🏒")
+st.set_page_config(page_title="🏒 NHL Matchup Predictor (AI-Enhanced)", layout="centered")
 
-# Load from environment (Railway Secrets)
-API_KEY = os.getenv("RAPIDAPI_KEY")
-API_HOST = os.getenv("RAPIDAPI_HOST")
+# Load API credentials from Railway environment variables
+API_KEY = os.environ.get("RAPIDAPI_KEY")
+API_HOST = os.environ.get("RAPIDAPI_HOST")
 
-HEADERS = {
+if not API_KEY or not API_HOST:
+    st.error("❌ Missing API credentials. Please set RAPIDAPI_KEY and RAPIDAPI_HOST as environment variables.")
+    st.stop()
+
+headers = {
     "X-RapidAPI-Key": API_KEY,
     "X-RapidAPI-Host": API_HOST
 }
-BASE_URL = f"https://{API_HOST}"
 
-# Set a fixed date for testing — April 6, 2025
-target_date = datetime.datetime(2025, 4, 6)
-year = target_date.strftime('%Y')
-month = target_date.strftime('%m')
-day = target_date.strftime('%d')
+# Get today's date in UTC
+today = datetime.datetime.utcnow()
+year = today.year
+month = today.month
+day = today.day
 
-st.title("🏒 NHL Schedule - RapidAPI Live Test")
+# Title
+st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
+st.caption(f"🔄 Showing games for **{today.strftime('%B %d, %Y')}** (UTC)")
 
-def get_schedule():
-    url = f"{BASE_URL}/nhlschedule"
-    params = {
-        "year": year,
-        "month": month,
-        "day": day
-    }
-    try:
-        response = requests.get(url, headers=HEADERS, params=params)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"❌ Failed to fetch schedule: {e}")
-        return {}
+# Build API URL
+url = f"https://{API_HOST}/nhlschedule?year={year}&month={month:02d}&day={day:02d}"
 
-schedule_data = get_schedule()
+# Request data
+try:
+    response = requests.get(url, headers=headers, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+except Exception as e:
+    st.error(f"❌ Failed to fetch schedule: {e}")
+    st.stop()
 
-st.subheader("📦 Raw API Response")
-st.json(schedule_data)
+# Parse and display matchups
+games = data.get("games", [])
 
-def extract_matchups(data):
-    games = data.get("games", [])
-    matchups = []
+if not games:
+    st.info("📅 No NHL games found or could not parse matchups.")
+else:
+    st.subheader("Today's Matchups")
     for game in games:
         try:
-            home = game.get("homeTeam", {}).get("abbreviation") or game.get("homeTeam", {}).get("name")
-            away = game.get("awayTeam", {}).get("abbreviation") or game.get("awayTeam", {}).get("name")
-            if home and away:
-                matchups.append(f"{away} @ {home}")
-        except Exception as e:
-            st.warning(f"Skipping game due to error: {e}")
-    return matchups
-
-matchups = extract_matchups(schedule_data)
-
-if matchups:
-    st.subheader("✅ Today's Matchups")
-    for matchup in matchups:
-        st.markdown(f"- {matchup}")
-else:
-    st.info("📅 No valid matchups found.")
-
+            matchup = game.get("name", "Matchup")
+            start_time = game.get("date", "").replace("T", " ").replace("Z", " UTC")
+            st.markdown(f"### {matchup}")
+            st.markdown(f"🕒 Start Time: `{start_time}`")
+            st.markdown("---")
+        except Exception as parse_err:
+            st.warning(f"⚠️ Couldn't parse a game: {parse_err}")
