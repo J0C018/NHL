@@ -139,46 +139,25 @@ def main():
     st.title("NHL Outcome Predictor")
     st.markdown("""
     This application predicts the outcomes of NHL games by using historical team statistics.
-    You can select a specific date or a range of dates (from 2020 to 2025) to fetch games and see predictions.
+    Select a specific date (from 2020 to 2025) to fetch games and see predictions.
     The prediction model is based on win percentage, goal differential, and Corsi for percentage with a home advantage bonus.
     """)
-
-    # Date selection: allow a single date or a date range
-    date_selection = st.date_input(
-        "Select a date or date range to fetch games:",
-        value=(datetime.date.today(), datetime.date.today()),
+    
+    # Single date selection
+    selected_date = st.date_input(
+        "Select a date to fetch games:",
+        value=datetime.date.today(),
         min_value=datetime.date(2020, 1, 1),
         max_value=datetime.date(2025, 12, 31)
     )
+    date_str = selected_date.strftime("%Y-%m-%d")
+    st.subheader(f"Games Scheduled for {date_str}")
     
-    # Aggregate schedule for the selected date(s)
-    schedule_list = []
-    if isinstance(date_selection, tuple):
-        start_date, end_date = date_selection
-        if start_date > end_date:
-            st.error("Start date must be before end date.")
-            return
-        
-        current_date = start_date
-        while current_date <= end_date:
-            date_str = current_date.strftime("%Y-%m-%d")
-            with st.spinner(f"Fetching schedule for {date_str}..."):
-                games = fetch_schedule(date_str)
-            if games:
-                for game in games:
-                    game["date"] = date_str  # annotate game with its date
-                    schedule_list.append(game)
-            current_date += datetime.timedelta(days=1)
-    else:
-        date_str = date_selection.strftime("%Y-%m-%d")
-        with st.spinner(f"Fetching schedule for {date_str}..."):
-            schedule_list = fetch_schedule(date_str)
-        # Annotate each game with its date
-        for game in schedule_list:
-            game["date"] = date_str
-
-    if not schedule_list:
-        st.warning("No games found for the selected date(s). Verify that the API has up-to-date schedule data for those dates.")
+    with st.spinner(f"Fetching schedule for {date_str}..."):
+        schedule = fetch_schedule(date_str)
+    
+    if not schedule:
+        st.warning("No games found for the selected date. Verify that the API has up-to-date schedule data for that date.")
         return
     
     with st.spinner("Fetching team details..."):
@@ -188,17 +167,16 @@ def main():
     with st.spinner("Fetching standings..."):
         standings = fetch_standings(season)
     
-    # Build dropdown list of games with dates
+    # Build dropdown list of games
     game_options = []
     game_map = {}
-    for game in schedule_list:
+    for game in schedule:
         teams_info = game.get("teams", {})
         home_team = teams_info.get("home", {}).get("team", {})
         away_team = teams_info.get("away", {}).get("team", {})
         home_name = home_team.get("name", "Unknown")
         away_name = away_team.get("name", "Unknown")
-        # Include the game date in the display string
-        display_str = f"{game.get('date')} - {away_name} @ {home_name}"
+        display_str = f"{date_str} - {away_name} @ {home_name}"
         game_options.append(display_str)
         game_map[display_str] = game
     
@@ -217,5 +195,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
