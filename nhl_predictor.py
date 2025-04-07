@@ -5,7 +5,7 @@ import os
 
 st.set_page_config(page_title="NHL Matchup Predictor (AI-Enhanced)", page_icon="🏒")
 
-# RapidAPI credentials from Railway environment variables
+# Get environment variables
 RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 
@@ -16,62 +16,62 @@ HEADERS = {
 
 BASE_URL = f"https://{RAPIDAPI_HOST}"
 
-def get_schedule(date):
-    """Fetches the NHL schedule for a specific date."""
-    year = date.strftime("%Y")
-    month = date.strftime("%m")
-    day = date.strftime("%d")
-    url = f"{BASE_URL}/nhlschedule?year={year}&month={month}&day={day}"
+def get_scoreboard(date):
+    """Fetch scoreboard from /nhlscoreboard with team matchups."""
+    url = f"{BASE_URL}/nhlscoreboard"
+    params = {
+        "year": date.strftime("%Y"),
+        "month": date.strftime("%m"),
+        "day": date.strftime("%d")
+    }
     try:
-        response = requests.get(url, headers=HEADERS)
-        response.raise_for_status()
-        return response.json()
+        res = requests.get(url, headers=HEADERS, params=params)
+        res.raise_for_status()
+        return res.json()
     except Exception as e:
-        st.error(f"❌ Failed to load schedule: {e}")
+        st.error(f"Failed to load scoreboard: {e}")
         return {}
 
-def extract_matchups(schedule_json):
-    """Extracts matchups from the /nhlschedule response."""
-    games = schedule_json.get("20250406", {}).get("calendar", [])
+def extract_matchups(scoreboard_json):
+    """Extract valid team matchups from the scoreboard."""
+    games = scoreboard_json.get("games", [])
     matchups = []
     for game in games:
         try:
-            away = game["awayTeam"]["teamName"]
             home = game["homeTeam"]["teamName"]
+            away = game["awayTeam"]["teamName"]
             game_id = game["gameId"]
             matchups.append({
                 "label": f"{away} @ {home}",
-                "away": away,
                 "home": home,
+                "away": away,
                 "id": game_id
             })
-        except Exception as e:
-            continue  # Skip malformed entries
+        except KeyError:
+            continue
     return matchups
 
 def predict_matchup(matchup):
-    """Dummy prediction logic placeholder."""
-    # TODO: Replace with AI-enhanced logic
+    """Placeholder prediction function."""
     return f"Prediction: {matchup['home']} has a slight edge over {matchup['away']}."
 
-# ---------- Streamlit UI ----------
+# ---------- UI ----------
 st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
 
-today = datetime.datetime(2025, 4, 6)  # Test date for known 10PM EST game
-schedule_data = get_schedule(today)
+today = datetime.datetime(2025, 4, 6)
+scoreboard_data = get_scoreboard(today)
 
-if schedule_data:
-    matchups = extract_matchups(schedule_data)
+if scoreboard_data:
+    matchups = extract_matchups(scoreboard_data)
     if matchups:
-        options = [m["label"] for m in matchups]
-        selected = st.selectbox("Select a game:", options)
+        option_labels = [m["label"] for m in matchups]
+        selected = st.selectbox("Select a matchup to predict:", option_labels)
         if st.button("🔮 Predict Result"):
-            selected_matchup = next((m for m in matchups if m["label"] == selected), None)
-            if selected_matchup:
-                result = predict_matchup(selected_matchup)
+            selected_game = next((m for m in matchups if m["label"] == selected), None)
+            if selected_game:
+                result = predict_matchup(selected_game)
                 st.success(result)
     else:
-        st.info("📅 No NHL games found or could not parse matchups.")
+        st.info("📅 No valid matchups found for today.")
 else:
-    st.warning("⚠️ No schedule data available.")
-
+    st.warning("⚠️ Could not retrieve game data.")
