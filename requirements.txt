@@ -1,5 +1,4 @@
-streamlit
 requests
+streamlit
 pandas
-scikit-learn
-joblib
+python-dotenv
