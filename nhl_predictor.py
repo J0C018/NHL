@@ -1,104 +1,135 @@
 import streamlit as st
-import os
 import requests
 import datetime
+import os
 
-st.set_page_config(page_title="NHL Predictor", page_icon="🏒")
+# Page config
+st.set_page_config(page_title="NHL Matchup Predictor (AI-Enhanced)", page_icon="🏒")
 
-# Environment variables (configured in Railway)
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
-RAPIDAPI_HOST = os.environ.get("RAPIDAPI_HOST")
+# Environment variables from Railway
+API_KEY = os.environ.get("RAPIDAPI_KEY")
+API_HOST = os.environ.get("RAPIDAPI_HOST")
+
 HEADERS = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": RAPIDAPI_HOST
+    "x-rapidapi-host": API_HOST,
+    "x-rapidapi-key": API_KEY
 }
-BASE_URL = f"https://{RAPIDAPI_HOST}"
 
-# Generic API fetcher
-def fetch(endpoint, params=None):
-    url = f"{BASE_URL}{endpoint}"
-    try:
-        r = requests.get(url, headers=HEADERS, params=params)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        st.warning(f"API error for {endpoint}: {e}")
-        return {}
+BASE_URL = f"https://{API_HOST}"
 
-# Schedule for today
-def get_today_schedule():
-    today = datetime.datetime.today()
-    return fetch("/nhlschedule", {"year": today.year, "month": today.month, "day": today.day})
+# Date setup: we force April 6, 2025 as user test target
+target_date = datetime.datetime(2025, 4, 6)
+year = target_date.strftime('%Y')
+month = target_date.strftime('%m')
+day = target_date.strftime('%d')
 
-# Stats & data endpoints
+# Functions to fetch data
+def get_schedule():
+    url = f"{BASE_URL}/nhlschedule?year={year}&month={month}&day={day}"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    return r.json()
+
+def get_team_ids():
+    url = f"{BASE_URL}/team/id"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    return r.json().get("teams", [])
+
 def get_team_stats(team_id):
-    return fetch("/team-statistic", {"teamId": team_id})
+    url = f"{BASE_URL}/team-statistic?teamId={team_id}"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    return r.json()
 
-def get_players(team_id):
-    return fetch("/players/id", {"teamId": team_id})
-
-def get_player_stats(player_id):
-    return fetch("/player-statistic", {"playerId": player_id})
+def get_recent_performance(team_id):
+    url = f"{BASE_URL}/schedule-team?season={year}&teamId={team_id}"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    return r.json()
 
 def get_injuries():
-    return fetch("/injuries")
+    url = f"{BASE_URL}/injuries"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    return r.json().get("injuries", [])
 
-def get_head_to_head(team_id_1, team_id_2):
-    season = datetime.datetime.today().year
-    games_1 = fetch("/schedule-team", {"season": season, "teamId": team_id_1})
-    games_2 = fetch("/schedule-team", {"season": season, "teamId": team_id_2})
-    return games_1, games_2
+def get_head_to_head_summary(game_id):
+    url = f"{BASE_URL}/nhlsummary?id={game_id}"
+    r = requests.get(url, headers=HEADERS)
+    r.raise_for_status()
+    return r.json()
 
-# Score calculation
-def score_team(team_id, injuries, recent_weight=0.15, h2h_weight=0.15):
-    stats = get_team_stats(team_id)
-    players = get_players(team_id)
-    active_players = []
-    all_points = 0
+# Weighted AI matchup logic
+def predict_game(home_id, away_id, game_id):
+    try:
+        home_stats = get_team_stats(home_id)
+        away_stats = get_team_stats(away_id)
 
-    if players.get("data"):
-        for p in players["data"]:
-            if not any(i["playerId"] == p["id"] for i in injuries.get("data", [])):
-                stats_p = get_player_stats(p["id"])
-                all_points += stats_p.get("data", {}).get("points", 0)
-                active_players.append(p["name"])
+        injuries = get_injuries()
+        head_to_head = get_head_to_head_summary(game_id)
 
-    score = 0
-    score += (stats.get("data", {}).get("goalsPerGame", 0) or 0) * 0.25
-    score += (all_points / max(len(active_players), 1)) * 0.20
+        home_score = 0
+        away_score = 0
 
-    # Recent games factor
-    recent_games = fetch("/nhlscoreboard", {
-        "year": datetime.datetime.today().year,
-        "month": datetime.datetime.today().month,
-        "day": datetime.datetime.today().day,
-        "limit": 5
-    })
-    if recent_games.get("data"):
-        recent_count = len([g for g in recent_games["data"] if g["home"]["id"] == team_id or g["away"]["id"] == team_id])
-        score += recent_count * recent_weight
+        # Recent performance (15%)
+        home_recent = get_recent_performance(home_id)
+        away_recent = get_recent_performance(away_id)
+        home_score += 15 * len(home_recent.get("schedule", []))
+        away_score += 15 * len(away_recent.get("schedule", []))
 
-    return score
+        # Injuries (5%) if star players missing
+        key_players = ["Connor McDavid", "Sidney Crosby", "Nathan MacKinnon"]
+        for inj in injuries:
+            if inj.get("player", "") in key_players:
+                if str(home_id) in inj.get("teamId", ""):
+                    home_score -= 5
+                if str(away_id) in inj.get("teamId", ""):
+                    away_score -= 5
 
-# ---------- Streamlit UI ----------
+        # Head-to-head (15%)
+        if "previousGames" in head_to_head:
+            for game in head_to_head["previousGames"]:
+                winner = game.get("winner", "")
+                if str(home_id) in winner:
+                    home_score += 15
+                elif str(away_id) in winner:
+                    away_score += 15
+
+        # Generic team strength (65%) — simple example
+        home_score += 65 * float(home_stats.get("wins", 0))
+        away_score += 65 * float(away_stats.get("wins", 0))
+
+        if home_score > away_score:
+            return f"Prediction: 🏠 Home team ({home_id}) wins!"
+        else:
+            return f"Prediction: 🚨 Away team ({away_id}) wins!"
+
+    except Exception as e:
+        return f"Error in prediction: {e}"
+
+# UI
 st.title("🏒 NHL Matchup Predictor (AI-Enhanced)")
 
-schedule = get_today_schedule()
-injuries = get_injuries()
+try:
+    schedule = get_schedule()
+    games = schedule.get("games", [])
 
-if schedule.get("data"):
-    matchups = schedule["data"]
-    matchup_options = [f"{m['away']['name']} @ {m['home']['name']}" for m in matchups]
-    selected = st.selectbox("Choose today's game:", matchup_options)
+    if not games:
+        st.info("📅 No games found for today.")
+    else:
+        team_ids = get_team_ids()
+        options = [f"{g['awayTeam']} @ {g['homeTeam']}" for g in games]
+        selected_game = st.selectbox("Choose a matchup:", options)
+        if st.button("🔮 Predict Result"):
+            idx = options.index(selected_game)
+            game = games[idx]
+            home_id = game["homeId"]
+            away_id = game["awayId"]
+            game_id = game["gameId"]
+            result = predict_game(home_id, away_id, game_id)
+            st.success(result)
 
-    if st.button("🔮 Predict Winner"):
-        game = next(g for g in matchups if f"{g['away']['name']} @ {g['home']['name']}" == selected)
-        away_score = score_team(game["away"]["id"], injuries)
-        home_score = score_team(game["home"]["id"], injuries)
-        winner = game["home"]["name"] if home_score > away_score else game["away"]["name"]
-
-        st.success(f"🏆 Predicted Winner: {winner}")
-        st.write(f"🔢 Home score: {home_score:.2f} | Away score: {away_score:.2f}")
-else:
-    st.info("No games found for today.")
+except Exception as e:
+    st.error(f"❌ Error: {e}")
 
